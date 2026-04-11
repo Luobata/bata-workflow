@@ -1,0 +1,26 @@
+version: 1
+roles:
+  - name: coordinator
+    description: 负责统筹目标、管理流程与最终汇总
+    defaultTaskTypes: [coordination]
+    defaultSkills: [orchestration]
+  - name: planner
+    description: 负责目标理解、任务拆解、依赖整理与验收条件定义
+    defaultTaskTypes: [planning]
+    defaultSkills: [analysis, decomposition]
+  - name: researcher
+    description: 负责调研、梳理上下文、搜集证据
+    defaultTaskTypes: [research]
+    defaultSkills: [analysis, discovery]
+  - name: coder
+    description: 负责编码、重构与实现交付
+    defaultTaskTypes: [coding]
+    defaultSkills: [implementation]
+  - name: reviewer
+    description: 负责代码审查、设计把关与风险识别
+    defaultTaskTypes: [code-review]
+    defaultSkills: [review, verification]
+  - name: tester
+    description: 负责测试设计、验证与质量回归
+    defaultTaskTypes: [testing]
+    defaultSkills: [verification, qa]

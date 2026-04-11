@@ -1,0 +1,16 @@
+version: 1
+defaults:
+  global: gpt5.4
+  teams:
+    default: gpt5.4
+taskTypes:
+  coding: gpt5.3-codex
+  testing: gpt5.3-codex
+  code-review: gpt5.3-codex
+roles:
+  coder: gpt5.3-codex
+  reviewer: gpt5.3-codex
+  tester: gpt5.3-codex
+skills:
+  implementation: gpt5.3-codex
+  verification: gpt5.3-codex

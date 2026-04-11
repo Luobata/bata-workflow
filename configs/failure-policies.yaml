@@ -1,0 +1,18 @@
+version: 1
+defaults:
+  global:
+    maxAttempts: 1
+  taskTypes:
+    coding:
+      maxAttempts: 2
+    code-review:
+      maxAttempts: 2
+    testing:
+      maxAttempts: 2
+  roles:
+    coder:
+      maxAttempts: 2
+    reviewer:
+      maxAttempts: 2
+    tester:
+      maxAttempts: 2
