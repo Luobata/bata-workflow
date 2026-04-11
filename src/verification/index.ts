@@ -8,10 +8,18 @@ export interface VerificationSummary {
 export function verifyAssignments(assignments: DispatchAssignment[]): VerificationSummary {
   const checks: string[] = []
 
-  const hasCodingCodex = assignments.some(
-    (assignment) => assignment.task.taskType === 'coding' && assignment.modelResolution.model === 'gpt5.3-codex'
+  const codingAssignments = assignments.filter((assignment) => assignment.task.taskType === 'coding')
+
+  const codingAssignmentsUseCodex = codingAssignments.every(
+    (assignment) => assignment.modelResolution.model === 'gpt5.3-codex'
   )
-  checks.push(hasCodingCodex ? 'coding 任务命中 gpt5.3-codex' : 'coding 任务未命中 gpt5.3-codex')
+  checks.push(
+    codingAssignments.length === 0
+      ? '当前 composition 不包含 coding 任务'
+      : codingAssignmentsUseCodex
+        ? 'coding 任务命中 gpt5.3-codex'
+        : '存在 coding 任务未命中 gpt5.3-codex'
+  )
 
   const nonCodingDefaults = assignments
     .filter((assignment) => !['coding', 'testing', 'code-review'].includes(assignment.task.taskType))
@@ -19,7 +27,7 @@ export function verifyAssignments(assignments: DispatchAssignment[]): Verificati
   checks.push(nonCodingDefaults ? '非 coding 类任务命中 gpt5.4' : '存在非 coding 类任务未命中 gpt5.4')
 
   return {
-    ok: hasCodingCodex && nonCodingDefaults,
+    ok: codingAssignmentsUseCodex && nonCodingDefaults,
     checks
   }
 }

@@ -7,6 +7,8 @@ import type { RoleDefinition } from '../domain/types.js'
 import { buildExecutionBatches } from '../runtime/scheduler.js'
 import { applyFailurePolicies, type FailurePolicyConfig } from '../runtime/failure-policy.js'
 import { runAssignmentsWithRuntime } from '../runtime/team-runtime.js'
+import { buildRunSummary } from '../runtime/task-queue.js'
+import type { TeamCompositionRegistry } from '../team/team-composition-loader.js'
 
 export async function runGoal(params: {
   input: GoalInput
@@ -14,12 +16,23 @@ export async function runGoal(params: {
   roleRegistry: Map<string, RoleDefinition>
   modelConfig: RoleModelConfig
   failurePolicyConfig: FailurePolicyConfig
+  teamCompositionRegistry: TeamCompositionRegistry
+  runDirectory: string
+  maxConcurrency?: number
 }): Promise<RunReport> {
-  const { input, adapter, roleRegistry, modelConfig, failurePolicyConfig } = params
-  const plan = applyFailurePolicies(buildPlan(input), failurePolicyConfig)
+  const { input, adapter, roleRegistry, modelConfig, failurePolicyConfig, teamCompositionRegistry, runDirectory, maxConcurrency = 2 } = params
+  const plan = applyFailurePolicies(buildPlan(input, teamCompositionRegistry), failurePolicyConfig)
   const assignments = dispatchPlan(plan, roleRegistry, modelConfig, input.teamName)
   const batches = buildExecutionBatches(assignments)
-  const { runtime, results } = await runAssignmentsWithRuntime({ assignments, batches, adapter })
+  const { runtime, results } = await runAssignmentsWithRuntime({
+    runDirectory,
+    goal: input.goal,
+    plan,
+    assignments,
+    batches,
+    adapter,
+    workerPool: { maxConcurrency }
+  })
 
   return {
     goal: input.goal,
@@ -27,6 +40,7 @@ export async function runGoal(params: {
     assignments,
     batches,
     runtime,
-    results
+    results,
+    summary: buildRunSummary({ runtime, results })
   }
 }

@@ -2,6 +2,12 @@ import type { ModelResolution, ModelResolutionInput } from '../domain/types.js'
 
 import type { RoleModelConfig } from './schema.js'
 
+export interface ModelOverride {
+  model: string
+  source: Extract<ModelResolution['source'], 'fallback' | 'remediation'>
+  reason: string
+}
+
 export function resolveModel(
   config: RoleModelConfig,
   input: ModelResolutionInput
@@ -47,4 +53,20 @@ export function resolveModel(
     source: 'global',
     reason: '回退到 global 默认模型'
   }
+}
+
+export function resolveModelWithOverride(
+  config: RoleModelConfig,
+  input: ModelResolutionInput,
+  override?: ModelOverride | null
+): ModelResolution {
+  if (override) {
+    return {
+      model: override.model,
+      source: override.source,
+      reason: override.reason
+    }
+  }
+
+  return resolveModel(config, input)
 }

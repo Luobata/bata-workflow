@@ -2,25 +2,30 @@
 
 如果你是一个新会话，请按下面步骤直接开始，不要重新从零分析。
 
-## 第一步：先读取这两份文档
+## 第一步：先读取这三份文档
 
-1. `docs/HANDOFF_STATUS_2026-04-11.md`
+1. `docs/NEXT_SESSION_ENTRY.md`
 2. `docs/NEXT_TASK_CHECKLIST.md`
+3. `docs/HANDOFF_STATUS_2026-04-11.md`
 
 ## 第二步：再读取这些关键源码
 
 1. `src/domain/types.ts`
-2. `src/runtime/team-runtime.ts`
-3. `src/runtime/recovery.ts`
-4. `src/runtime/state-store.ts`
-5. `src/runtime/scheduler.ts`
-6. `src/cli/index.ts`
+2. `src/runtime/task-queue.ts`
+3. `src/runtime/task-store.ts`
+4. `src/runtime/team-runtime.ts`
+5. `src/runtime/failure-policy.ts`
+6. `src/runtime/recovery.ts`
+7. `src/runtime/state-store.ts`
+8. `src/runtime/scheduler.ts`
+9. `src/dispatcher/dispatcher.ts`
+10. `src/cli/index.ts`
 
 ## 第三步：按下面目标继续实现
 
 当前推荐直接进入：
 
-> 实现持久化 `task queue + worker pool + maxConcurrency`，并把 `resume` 从 report 快照恢复升级为 queue 驱动恢复。
+> 在现有 queue-based runtime 基础上，继续做 **fix/verify loop 独立 role/model 解析、report 顶层 summary 聚合、skill/team composition 配置化**。
 
 ## 第四步：执行前检查
 
@@ -47,4 +52,4 @@ pnpm --dir "/Users/bytedance/luobata/bata-skill/harness" resume --adapter=dry-ru
 
 ## 给新会话的一句话提示
 
-当前系统已经有：模型配置、角色 prompt、coco-cli、retry、state 持久化、resume；不要重做这些基础，直接往 **task queue / worker pool / maxConcurrency / queue-based resume** 继续推进。
+当前系统已经有：`task queue`、`task store`、`worker pool`、`maxConcurrency`、`queue-based resume`、failure fallback、显式 `fix/verify loop`、runtime 动态任务统计；不要回头重做这些基础，直接往 **loop 独立 role/model 解析、report summary 聚合、skill/team composition 配置化** 继续推进。

@@ -3,22 +3,27 @@ export interface SkillDefinition {
   description: string
 }
 
-const SKILLS: SkillDefinition[] = [
-  { name: 'orchestration', description: '统筹任务编排、跟踪状态与汇总结果' },
-  { name: 'analysis', description: '分析目标、上下文与风险' },
-  { name: 'decomposition', description: '拆解任务与依赖' },
-  { name: 'discovery', description: '快速收集资料和代码上下文' },
-  { name: 'implementation', description: '实现与重构代码' },
-  { name: 'review', description: '审查产物并提出修复意见' },
-  { name: 'verification', description: '验证、测试与质量确认' },
-  { name: 'qa', description: '回归测试与场景验证' }
-]
-
-export function listSkills(): SkillDefinition[] {
-  return SKILLS
+export interface SkillRegistry {
+  skills: SkillDefinition[]
+  byName: Map<string, SkillDefinition>
 }
 
-export function getSkillsByNames(names: string[]): SkillDefinition[] {
+export function buildSkillRegistry(skills: SkillDefinition[]): SkillRegistry {
+  return {
+    skills,
+    byName: new Map(skills.map((skill) => [skill.name, skill]))
+  }
+}
+
+export function listSkills(registry: SkillRegistry): SkillDefinition[] {
+  return registry.skills
+}
+
+export function getSkillsByNames(names: string[], registry?: SkillRegistry): SkillDefinition[] {
+  if (!registry) {
+    return []
+  }
+
   const lookup = new Set(names)
-  return SKILLS.filter((skill) => lookup.has(skill.name))
+  return registry.skills.filter((skill) => lookup.has(skill.name))
 }

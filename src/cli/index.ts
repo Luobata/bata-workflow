@@ -7,10 +7,14 @@ import { buildPlan } from '../planner/planner.js'
 import { loadRoleModelConfig } from '../role-model-config/loader.js'
 import { CocoCliAdapter, DryRunCocoAdapter } from '../runtime/coco-adapter.js'
 import { applyFailurePolicies, loadFailurePolicyConfig } from '../runtime/failure-policy.js'
-import { loadLatestRunPointer, loadRunReport, persistPlan, persistRunReport } from '../runtime/state-store.js'
+import { createRunDirectory, loadLatestRunPointer, persistPlan, persistRunReport } from '../runtime/state-store.js'
 import { resumeRun } from '../runtime/recovery.js'
 import { loadRoles, buildRoleRegistry } from '../team/role-registry.js'
 import { loadRolePromptTemplates } from '../team/prompt-loader.js'
+import { loadSkills } from '../team/skill-loader.js'
+import { buildSkillRegistry } from '../team/skill-registry.js'
+import { loadTeamCompositionRegistry } from '../team/team-composition-loader.js'
+import { loadSlashCommandRegistry, resolveSlashCommand } from './slash-command-loader.js'
 import { runGoal } from '../orchestrator/run-goal.js'
 import { verifyAssignments, verifyRun } from '../verification/index.js'
 
@@ -19,6 +23,9 @@ const roleModelConfigPath = resolve(root, 'configs/role-models.yaml')
 const rolesConfigPath = resolve(root, 'configs/roles.yaml')
 const rolePromptConfigPath = resolve(root, 'configs/role-prompts.yaml')
 const failurePolicyConfigPath = resolve(root, 'configs/failure-policies.yaml')
+const skillsConfigPath = resolve(root, 'configs/skills.yaml')
+const teamCompositionConfigPath = resolve(root, 'configs/team-compositions.yaml')
+const slashCommandConfigPath = resolve(root, 'configs/slash-commands.yaml')
 const stateRoot = resolve(root, '.harness/state')
 
 function parseFlags(args: string[]): { flags: Map<string, string>; positionals: string[] } {
@@ -38,8 +45,12 @@ function parseFlags(args: string[]): { flags: Map<string, string>; positionals: 
 }
 
 async function main(): Promise<void> {
-  const [, , command = 'plan', ...rawArgs] = process.argv
-  const { flags, positionals } = parseFlags(rawArgs)
+  const [, , rawCommand = 'plan', ...rawArgs] = process.argv
+  const { flags: parsedFlags, positionals } = parseFlags(rawArgs)
+  const slashCommandRegistry = loadSlashCommandRegistry(slashCommandConfigPath)
+  const slashResolution = resolveSlashCommand(rawCommand, parsedFlags, slashCommandRegistry)
+  const command = slashResolution?.command ?? rawCommand
+  const flags = slashResolution?.flags ?? parsedFlags
   const goal = positionals.join(' ').trim()
 
   if (!goal && command !== 'resume') {
@@ -51,16 +62,31 @@ async function main(): Promise<void> {
   const modelConfig = loadRoleModelConfig(roleModelConfigPath)
   const promptTemplates = loadRolePromptTemplates(rolePromptConfigPath)
   const failurePolicyConfig = loadFailurePolicyConfig(failurePolicyConfigPath)
+  const skillRegistry = buildSkillRegistry(loadSkills(skillsConfigPath))
+  const teamCompositionRegistry = loadTeamCompositionRegistry(teamCompositionConfigPath)
   const adapterKind = flags.get('adapter') ?? 'dry-run'
   const timeoutMs = Number(flags.get('timeoutMs') ?? '120000')
+  const teamName = flags.get('teamName') ?? 'default'
+  const compositionName = flags.get('composition')
+  const maxConcurrencyFlag = flags.get('maxConcurrency')
   const allowedTools = (flags.get('allowedTools') ?? '')
     .split(',')
     .map((item) => item.trim())
     .filter(Boolean)
 
+  if (Number.isNaN(timeoutMs) || timeoutMs <= 0) {
+    throw new Error(`timeoutMs 非法: ${flags.get('timeoutMs')}`)
+  }
+
+  if (maxConcurrencyFlag && (!Number.isInteger(Number(maxConcurrencyFlag)) || Number(maxConcurrencyFlag) <= 0)) {
+    throw new Error(`maxConcurrency 非法: ${maxConcurrencyFlag}`)
+  }
+
+  const maxConcurrency = maxConcurrencyFlag ? Number(maxConcurrencyFlag) : undefined
+
   if (command === 'plan') {
-    const plan = applyFailurePolicies(buildPlan({ goal, teamName: 'default' }), failurePolicyConfig)
-    const assignments = dispatchPlan(plan, roleRegistry, modelConfig)
+    const plan = applyFailurePolicies(buildPlan({ goal, teamName, compositionName }, teamCompositionRegistry), failurePolicyConfig)
+    const assignments = dispatchPlan(plan, roleRegistry, modelConfig, teamName)
     const { buildExecutionBatches } = await import('../runtime/scheduler.js')
     const batches = buildExecutionBatches(assignments)
     const verification = verifyAssignments(assignments)
@@ -70,20 +96,24 @@ async function main(): Promise<void> {
   }
 
   if (command === 'run') {
+    const runDirectory = createRunDirectory(stateRoot, goal)
     const adapter =
       adapterKind === 'coco-cli'
-        ? new CocoCliAdapter({ timeoutMs, allowedTools, yolo: flags.get('yolo') === 'true', promptTemplates })
+        ? new CocoCliAdapter({ timeoutMs, allowedTools, yolo: flags.get('yolo') === 'true', promptTemplates, skillRegistry })
         : new DryRunCocoAdapter()
 
     const report = await runGoal({
-      input: { goal, teamName: 'default' },
+      input: { goal, teamName, compositionName },
       adapter,
       roleRegistry,
       modelConfig,
-      failurePolicyConfig
+      failurePolicyConfig,
+      teamCompositionRegistry,
+      runDirectory,
+      maxConcurrency: maxConcurrency ?? 2
     })
     const verification = verifyRun(report)
-    const persisted = persistRunReport(stateRoot, report)
+    const persisted = persistRunReport(stateRoot, report, runDirectory)
     process.stdout.write(JSON.stringify({ adapter: adapterKind, report, verification, persisted }, null, 2))
     return
   }
@@ -91,21 +121,30 @@ async function main(): Promise<void> {
   if (command === 'resume') {
     const latestRun = loadLatestRunPointer(stateRoot)
     const reportPath = flags.get('reportPath') ?? latestRun?.reportPath
+    const runDirectory = flags.get('runDirectory') ?? latestRun?.runDirectory
 
-    if (!reportPath) {
-      throw new Error('未找到可恢复的运行，请先执行 run，或通过 --reportPath 指定报告路径')
+    if (!runDirectory && !reportPath) {
+      throw new Error('未找到可恢复的运行，请先执行 run，或通过 --runDirectory/--reportPath 指定恢复目标')
     }
 
-    const previousReport = loadRunReport(reportPath)
     const adapter =
       adapterKind === 'coco-cli'
-        ? new CocoCliAdapter({ timeoutMs, allowedTools, yolo: flags.get('yolo') === 'true', promptTemplates })
+        ? new CocoCliAdapter({ timeoutMs, allowedTools, yolo: flags.get('yolo') === 'true', promptTemplates, skillRegistry })
         : new DryRunCocoAdapter()
-    const report = await resumeRun({ previousReport, adapter })
+    const report = await resumeRun({
+      adapter,
+      runDirectory,
+      reportPath,
+      workerPool: maxConcurrency ? { maxConcurrency } : undefined
+    })
     const verification = verifyRun(report)
-    const persisted = persistRunReport(stateRoot, report, latestRun?.runDirectory)
+    const persisted = persistRunReport(stateRoot, report, runDirectory ?? latestRun?.runDirectory)
     process.stdout.write(
-      JSON.stringify({ adapter: adapterKind, resumedFrom: reportPath, report, verification, persisted }, null, 2)
+      JSON.stringify(
+        { adapter: adapterKind, resumedFrom: runDirectory ?? reportPath, report, verification, persisted },
+        null,
+        2
+      )
     )
     return
   }

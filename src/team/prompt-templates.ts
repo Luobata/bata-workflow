@@ -1,5 +1,5 @@
 import type { DispatchAssignment } from '../domain/types.js'
-import { getSkillsByNames } from './skill-registry.js'
+import { getSkillsByNames, type SkillRegistry } from './skill-registry.js'
 import type { RolePromptTemplateRegistry } from './prompt-loader.js'
 
 export interface RolePromptTemplate {
@@ -61,10 +61,11 @@ export function getRolePromptTemplate(role: string): RolePromptTemplate {
 
 export function buildRolePromptSection(
   assignment: DispatchAssignment,
-  registry?: RolePromptTemplateRegistry
+  registry?: RolePromptTemplateRegistry,
+  skillRegistry?: SkillRegistry
 ): string {
   const template = registry?.roles[assignment.roleDefinition.name] ?? getRolePromptTemplate(assignment.roleDefinition.name)
-  const skills = getSkillsByNames(assignment.task.skills)
+  const skills = getSkillsByNames(assignment.task.skills, skillRegistry)
 
   return [
     template.opening,

@@ -2,17 +2,37 @@ version: 1
 defaults:
   global:
     maxAttempts: 1
+    retryDelayMs: 0
+    fallbackRole: null
+    fallbackModel: null
+    fixVerifyLoop: null
+    retryOn: []
+    terminalOn: []
   taskTypes:
     coding:
       maxAttempts: 2
+      retryDelayMs: 10
+      fallbackRole: reviewer
     code-review:
-      maxAttempts: 2
+      maxAttempts: 1
+      terminalOn: [critical, security]
     testing:
       maxAttempts: 2
+      retryDelayMs: 10
+      fallbackRole: reviewer
+      fixVerifyLoop:
+        enabled: true
+        maxRounds: 2
+        remediationRole: coder
+        remediationModel: gpt5.3-codex-remediation
+        remediationTaskType: coding
+        remediationSkills: [implementation]
+        remediationTitleTemplate: 修复 {{sourceTaskId}} 测试失败问题
+        remediationDescriptionTemplate: 针对 {{sourceTaskId}} 的测试失败进行修复。原任务：{{sourceDescription}}；当前轮次：{{attempt}}
   roles:
     coder:
       maxAttempts: 2
     reviewer:
-      maxAttempts: 2
+      maxAttempts: 1
     tester:
       maxAttempts: 2

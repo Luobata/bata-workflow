@@ -1,10 +1,18 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 import type { Plan, RunReport } from '../domain/types.js'
+import { getQueuePath, type TaskStoreSnapshot, getTaskStorePath } from './task-store.js'
 
 function ensureDir(path: string): void {
   mkdirSync(path, { recursive: true })
+}
+
+function atomicWriteJson(path: string, data: unknown): void {
+  ensureDir(resolve(path, '..'))
+  const tempPath = `${path}.tmp-${process.pid}-${Date.now()}`
+  writeFileSync(tempPath, JSON.stringify(data, null, 2))
+  renameSync(tempPath, path)
 }
 
 function slugifyGoal(goal: string): string {
@@ -26,56 +34,71 @@ export interface StateStoreResult {
   planPath: string
   reportPath: string
   taskStorePath: string
+  queuePath: string
 }
 
 export interface LatestRunPointer {
   runDirectory: string
   reportPath: string
+  taskStorePath: string
+  queuePath: string
 }
 
-export interface TaskStoreSnapshot {
-  goal: string
-  assignments: RunReport['assignments']
-  taskStates: RunReport['runtime']['taskStates']
-  pendingTaskIds: string[]
-  completedTaskIds: string[]
+function buildTaskStoreSnapshot(report: RunReport): TaskStoreSnapshot {
+  return {
+    goal: report.goal,
+    plan: report.plan,
+    assignments: report.assignments,
+    taskStates: report.runtime.taskStates,
+    pendingTaskIds: report.runtime.pendingTaskIds,
+    completedTaskIds: report.runtime.completedTaskIds,
+    results: report.results
+  }
+}
+
+export function createRunDirectory(stateRoot: string, goal: string): string {
+  const runDirectory = buildRunDir(stateRoot, goal)
+  ensureDir(runDirectory)
+  return runDirectory
 }
 
 export function persistPlan(stateRoot: string, plan: Plan): string {
   const planDir = resolve(stateRoot, 'plans')
   ensureDir(planDir)
   const planPath = resolve(planDir, 'latest-plan.json')
-  writeFileSync(planPath, JSON.stringify(plan, null, 2))
+  atomicWriteJson(planPath, plan)
   return planPath
 }
 
 export function persistTaskStore(runDirectory: string, report: RunReport): string {
-  const taskStorePath = resolve(runDirectory, 'task-store.json')
-  const snapshot: TaskStoreSnapshot = {
-    goal: report.goal,
-    assignments: report.assignments,
-    taskStates: report.runtime.taskStates,
-    pendingTaskIds: report.runtime.pendingTaskIds,
-    completedTaskIds: report.runtime.completedTaskIds
-  }
-  writeFileSync(taskStorePath, JSON.stringify(snapshot, null, 2))
+  const taskStorePath = getTaskStorePath(runDirectory)
+  atomicWriteJson(taskStorePath, buildTaskStoreSnapshot(report))
   return taskStorePath
 }
 
 export function persistRunReport(stateRoot: string, report: RunReport, runDirectory?: string): StateStoreResult {
-  const targetRunDirectory = runDirectory ?? buildRunDir(stateRoot, report.goal)
+  const targetRunDirectory = runDirectory ?? createRunDirectory(stateRoot, report.goal)
   ensureDir(targetRunDirectory)
 
   const planPath = resolve(targetRunDirectory, 'plan.json')
   const reportPath = resolve(targetRunDirectory, 'report.json')
   const latestPath = resolve(stateRoot, 'latest-run.json')
-
-  writeFileSync(planPath, JSON.stringify(report.plan, null, 2))
-  writeFileSync(reportPath, JSON.stringify(report, null, 2))
+  const queuePath = getQueuePath(targetRunDirectory)
   const taskStorePath = persistTaskStore(targetRunDirectory, report)
-  writeFileSync(latestPath, JSON.stringify({ runDirectory: targetRunDirectory, reportPath }, null, 2))
 
-  return { runDirectory: targetRunDirectory, planPath, reportPath, taskStorePath }
+  atomicWriteJson(planPath, report.plan)
+  atomicWriteJson(reportPath, report)
+  atomicWriteJson(
+    latestPath,
+    {
+      runDirectory: targetRunDirectory,
+      reportPath,
+      taskStorePath,
+      queuePath
+    } satisfies LatestRunPointer
+  )
+
+  return { runDirectory: targetRunDirectory, planPath, reportPath, taskStorePath, queuePath }
 }
 
 export function loadLatestRunPointer(stateRoot: string): LatestRunPointer | null {

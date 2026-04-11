@@ -1,81 +1,58 @@
-import type { DispatchAssignment, RunReport } from '../domain/types.js'
+import { dirname } from 'node:path'
+
+import type { RunReport, WorkerPoolConfig } from '../domain/types.js'
 import type { CocoAdapter } from './coco-adapter.js'
-import { buildExecutionBatches } from './scheduler.js'
+import { queueExists } from './task-store.js'
 import { runAssignmentsWithRuntime } from './team-runtime.js'
+import { buildRunSummary, loadTaskQueue } from './task-queue.js'
 
-function getCompletedTaskIds(report: RunReport): string[] {
-  return report.runtime.taskStates.filter((taskState) => taskState.status === 'completed').map((taskState) => taskState.taskId)
+function buildReportFromQueue(runDirectory: string): RunReport {
+  const queue = loadTaskQueue(runDirectory)
+  const runtime = queue.getRuntimeSnapshot()
+  const results = queue.listResults()
+
+  return {
+    goal: queue.goal,
+    plan: queue.plan,
+    assignments: queue.listAssignments(),
+    batches: runtime.batches,
+    runtime,
+    results,
+    summary: buildRunSummary({ runtime, results })
+  }
 }
 
-function getIncompleteAssignments(report: RunReport): DispatchAssignment[] {
-  const completed = new Set(getCompletedTaskIds(report))
-  return report.assignments.filter((assignment) => !completed.has(assignment.task.id))
-}
+function resolveRunDirectory(params: { runDirectory?: string; reportPath?: string }): string {
+  if (params.runDirectory) {
+    return params.runDirectory
+  }
 
-function prefixBatches(batches: RunReport['batches'], prefix: string) {
-  return batches.map((batch, index) => ({
-    batchId: `${prefix}${index + 1}`,
-    taskIds: batch.taskIds
-  }))
+  if (params.reportPath) {
+    return dirname(params.reportPath)
+  }
+
+  throw new Error('未提供 runDirectory，也无法从 reportPath 推导恢复目录')
 }
 
 export async function resumeRun(params: {
-  previousReport: RunReport
   adapter: CocoAdapter
+  runDirectory?: string
+  reportPath?: string
+  workerPool?: WorkerPoolConfig
 }): Promise<RunReport> {
-  const { previousReport, adapter } = params
-  const incompleteAssignments = getIncompleteAssignments(previousReport)
+  const { adapter, workerPool } = params
+  const runDirectory = resolveRunDirectory(params)
 
-  if (incompleteAssignments.length === 0) {
-    return previousReport
+  if (!queueExists(runDirectory)) {
+    throw new Error(`未找到可恢复的队列状态: ${runDirectory}`)
   }
 
-  const completedTaskIds = getCompletedTaskIds(previousReport)
-  const resumedBatches = prefixBatches(buildExecutionBatches(incompleteAssignments, completedTaskIds), 'R')
-  const resumed = await runAssignmentsWithRuntime({
-    assignments: incompleteAssignments,
-    batches: resumedBatches,
+  await runAssignmentsWithRuntime({
+    runDirectory,
     adapter,
-    initialCompletedTaskIds: completedTaskIds
+    workerPool,
+    resume: true
   })
 
-  const mergedResultsMap = new Map(previousReport.results.map((result) => [result.taskId, result]))
-  for (const result of resumed.results) {
-    mergedResultsMap.set(result.taskId, result)
-  }
-
-  const mergedTaskStateMap = new Map(previousReport.runtime.taskStates.map((taskState) => [taskState.taskId, taskState]))
-  for (const taskState of resumed.runtime.taskStates) {
-    mergedTaskStateMap.set(taskState.taskId, taskState)
-  }
-
-  const mergedWorkers = [
-    ...previousReport.runtime.workers.filter(
-      (worker) => !resumed.runtime.workers.some((resumedWorker) => resumedWorker.taskId === worker.taskId)
-    ),
-    ...resumed.runtime.workers
-  ]
-
-  const mergedRuntime = {
-    workers: mergedWorkers,
-    batches: [...previousReport.runtime.batches, ...resumed.runtime.batches],
-    completedTaskIds: Array.from(
-      new Set([...previousReport.runtime.completedTaskIds, ...resumed.runtime.completedTaskIds])
-    ),
-    pendingTaskIds: Array.from(new Set([...previousReport.runtime.pendingTaskIds, ...resumed.runtime.pendingTaskIds])).filter(
-      (taskId) => !resumed.runtime.completedTaskIds.includes(taskId)
-    ),
-    events: [...previousReport.runtime.events, ...resumed.runtime.events],
-    mailbox: [...previousReport.runtime.mailbox, ...resumed.runtime.mailbox],
-    taskStates: previousReport.assignments.map((assignment) => mergedTaskStateMap.get(assignment.task.id)!).filter(Boolean)
-  }
-
-  return {
-    ...previousReport,
-    batches: [...previousReport.batches, ...resumedBatches],
-    runtime: mergedRuntime,
-    results: previousReport.assignments
-      .map((assignment) => mergedResultsMap.get(assignment.task.id))
-      .filter(Boolean) as RunReport['results']
-  }
+  return buildReportFromQueue(runDirectory)
 }

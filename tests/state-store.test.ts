@@ -25,15 +25,33 @@ describe('state store', () => {
       assignments: [],
       batches: [],
       runtime: {
+        maxConcurrency: 2,
         workers: [],
         batches: [],
         completedTaskIds: [],
         pendingTaskIds: [],
+        readyTaskIds: [],
+        inProgressTaskIds: [],
+        failedTaskIds: [],
+        dynamicTaskStats: {
+          generatedTaskCount: 0,
+          generatedTaskIds: [],
+          generatedTaskCountBySourceTaskId: {}
+        },
+        loopSummaries: [],
         events: [],
         mailbox: [],
         taskStates: []
       },
-      results: []
+      results: [],
+      summary: {
+        generatedTaskCount: 0,
+        loopCount: 0,
+        loopedSourceTaskIds: [],
+        failedTaskCount: 0,
+        completedTaskCount: 0,
+        retryTaskCount: 0
+      }
     }
     const persisted = persistRunReport(root, report)
     const storedReport = JSON.parse(readFileSync(persisted.reportPath, 'utf8')) as RunReport

@@ -1,0 +1,159 @@
+version: 1
+defaults:
+  composition: feature-dev
+compositions:
+  feature-dev:
+    description: 面向功能开发或 bugfix 的标准研发闭环
+    workstreams:
+      - taskType: planning
+        role: planner
+        title: 拆解目标与定义执行计划
+        skills: [analysis, decomposition]
+        acceptance:
+          - 输出结构化任务列表
+          - 明确依赖关系与验收条件
+      - taskType: coding
+        role: coder
+        title: 完成核心实现
+        skills: [implementation]
+        acceptance:
+          - 实现关键功能
+          - 产出可验证的变更说明
+      - taskType: code-review
+        role: reviewer
+        title: 执行代码审查与修正建议
+        skills: [review, verification]
+        acceptance:
+          - 指出主要风险
+          - 输出审查结论
+      - taskType: testing
+        role: tester
+        title: 执行测试与验证
+        skills: [verification, qa]
+        acceptance:
+          - 验证主要场景
+          - 确认交付满足验收条件
+      - taskType: coordination
+        role: coordinator
+        title: 汇总执行结果并形成最终交付
+        skills: [orchestration]
+        acceptance:
+          - 汇总各角色结果
+          - 形成最终交付摘要
+  mixed-research-dev:
+    description: 先调研再开发的完整闭环
+    workstreams:
+      - taskType: planning
+        role: planner
+        title: 拆解目标与定义执行计划
+        skills: [analysis, decomposition]
+        acceptance:
+          - 输出结构化任务列表
+          - 明确依赖关系与验收条件
+      - taskType: research
+        role: researcher
+        title: 补充上下文调研与约束梳理
+        skills: [analysis, discovery]
+        acceptance:
+          - 识别关键上下文
+          - 给出风险与前置条件
+      - taskType: coding
+        role: coder
+        title: 完成核心实现
+        skills: [implementation]
+        acceptance:
+          - 实现关键功能
+          - 产出可验证的变更说明
+      - taskType: code-review
+        role: reviewer
+        title: 执行代码审查与修正建议
+        skills: [review, verification]
+        acceptance:
+          - 指出主要风险
+          - 输出审查结论
+      - taskType: testing
+        role: tester
+        title: 执行测试与验证
+        skills: [verification, qa]
+        acceptance:
+          - 验证主要场景
+          - 确认交付满足验收条件
+      - taskType: coordination
+        role: coordinator
+        title: 汇总执行结果并形成最终交付
+        skills: [orchestration]
+        acceptance:
+          - 汇总各角色结果
+          - 形成最终交付摘要
+  research-only:
+    description: 仅调研与总结
+    workstreams:
+      - taskType: planning
+        role: planner
+        title: 拆解目标与定义执行计划
+        skills: [analysis, decomposition]
+        acceptance:
+          - 输出结构化任务列表
+          - 明确依赖关系与验收条件
+      - taskType: research
+        role: researcher
+        title: 补充上下文调研与约束梳理
+        skills: [analysis, discovery]
+        acceptance:
+          - 识别关键上下文
+          - 给出风险与前置条件
+      - taskType: coordination
+        role: coordinator
+        title: 汇总执行结果并形成最终交付
+        skills: [orchestration]
+        acceptance:
+          - 汇总各角色结果
+          - 形成最终交付摘要
+  qa-only:
+    description: 仅验证与回归
+    workstreams:
+      - taskType: planning
+        role: planner
+        title: 拆解目标与定义执行计划
+        skills: [analysis, decomposition]
+        acceptance:
+          - 输出结构化任务列表
+          - 明确依赖关系与验收条件
+      - taskType: testing
+        role: tester
+        title: 执行测试与验证
+        skills: [verification, qa]
+        acceptance:
+          - 验证主要场景
+          - 确认交付满足验收条件
+      - taskType: coordination
+        role: coordinator
+        title: 汇总执行结果并形成最终交付
+        skills: [orchestration]
+        acceptance:
+          - 汇总各角色结果
+          - 形成最终交付摘要
+  review-only:
+    description: 仅审查与结论输出
+    workstreams:
+      - taskType: planning
+        role: planner
+        title: 拆解目标与定义执行计划
+        skills: [analysis, decomposition]
+        acceptance:
+          - 输出结构化任务列表
+          - 明确依赖关系与验收条件
+      - taskType: code-review
+        role: reviewer
+        title: 执行代码审查与修正建议
+        skills: [review, verification]
+        acceptance:
+          - 指出主要风险
+          - 输出审查结论
+      - taskType: coordination
+        role: coordinator
+        title: 汇总执行结果并形成最终交付
+        skills: [orchestration]
+        acceptance:
+          - 汇总各角色结果
+          - 形成最终交付摘要

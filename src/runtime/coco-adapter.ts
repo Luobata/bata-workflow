@@ -4,6 +4,7 @@ import { promisify } from 'node:util'
 import type { DispatchAssignment, TaskExecutionResult } from '../domain/types.js'
 import { buildRolePromptSection } from '../team/prompt-templates.js'
 import type { RolePromptTemplateRegistry } from '../team/prompt-loader.js'
+import type { SkillRegistry } from '../team/skill-registry.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -26,6 +27,7 @@ export interface CocoCliAdapterOptions {
   yolo?: boolean
   runner?: CocoRunner
   promptTemplates?: RolePromptTemplateRegistry
+  skillRegistry?: SkillRegistry
 }
 
 interface CocoStructuredOutput {
@@ -51,14 +53,15 @@ class ProcessCocoRunner implements CocoRunner {
 
 export function buildCocoPrompt(
   assignment: DispatchAssignment,
-  promptTemplates?: RolePromptTemplateRegistry
+  promptTemplates?: RolePromptTemplateRegistry,
+  skillRegistry?: SkillRegistry
 ): string {
   const { task, modelResolution, roleDefinition } = assignment
   const acceptance = task.acceptanceCriteria.map((item, index) => `${index + 1}. ${item}`).join('\n')
 
   return [
     '你是一个被 harness 调度的执行角色。请只完成当前任务，不要扩展范围。',
-    buildRolePromptSection(assignment, promptTemplates),
+    buildRolePromptSection(assignment, promptTemplates, skillRegistry),
     `任务ID: ${task.id}`,
     `角色: ${roleDefinition.name}`,
     `任务类型: ${task.taskType}`,
@@ -127,6 +130,7 @@ export class CocoCliAdapter implements CocoAdapter {
   private readonly yolo: boolean
   private readonly runner: CocoRunner
   private readonly promptTemplates?: RolePromptTemplateRegistry
+  private readonly skillRegistry?: SkillRegistry
 
   constructor(options: CocoCliAdapterOptions = {}) {
     this.command = options.command ?? 'coco'
@@ -135,10 +139,11 @@ export class CocoCliAdapter implements CocoAdapter {
     this.yolo = options.yolo ?? false
     this.runner = options.runner ?? new ProcessCocoRunner(this.command)
     this.promptTemplates = options.promptTemplates
+    this.skillRegistry = options.skillRegistry
   }
 
   async execute({ assignment }: CocoExecutionRequest): Promise<TaskExecutionResult> {
-    const prompt = buildCocoPrompt(assignment, this.promptTemplates)
+    const prompt = buildCocoPrompt(assignment, this.promptTemplates, this.skillRegistry)
     const args = buildCocoCliArgs({
       prompt,
       timeoutMs: this.timeoutMs,

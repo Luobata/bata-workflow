@@ -1,8 +1,15 @@
+import { resolve } from 'node:path'
+
 import { describe, expect, it } from 'vitest'
 
 import type { DispatchAssignment } from '../src/domain/types.js'
 import { CocoCliAdapter, buildCocoCliArgs, buildCocoPrompt } from '../src/runtime/coco-adapter.js'
 import type { RolePromptTemplateRegistry } from '../src/team/prompt-loader.js'
+import { loadSkills } from '../src/team/skill-loader.js'
+import { buildSkillRegistry } from '../src/team/skill-registry.js'
+
+const skillsConfigPath = resolve(import.meta.dirname, '../configs/skills.yaml')
+const skillRegistry = buildSkillRegistry(loadSkills(skillsConfigPath))
 
 const assignment: DispatchAssignment = {
   task: {
@@ -27,7 +34,9 @@ const assignment: DispatchAssignment = {
     model: 'gpt5.3-codex',
     source: 'taskType',
     reason: 'taskType=coding 命中 taskTypes 配置'
-  }
+  },
+  fallback: null,
+  remediation: null
 }
 
 describe('coco adapter', () => {
@@ -43,7 +52,7 @@ describe('coco adapter', () => {
   })
 
   it('生成带角色模板和技能说明的 prompt', () => {
-    const prompt = buildCocoPrompt(assignment)
+    const prompt = buildCocoPrompt(assignment, undefined, skillRegistry)
     expect(prompt).toContain('你是实现者')
     expect(prompt).toContain('implementation: 实现与重构代码')
     expect(prompt).toContain('JSON schema')
@@ -61,7 +70,7 @@ describe('coco adapter', () => {
       }
     }
 
-    const prompt = buildCocoPrompt(assignment, templates)
+    const prompt = buildCocoPrompt(assignment, templates, skillRegistry)
     expect(prompt).toContain('你是外部配置的实现者。')
   })
 
