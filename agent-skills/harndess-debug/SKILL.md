@@ -55,16 +55,29 @@ pnpm --dir "/Users/bytedance/luobata/bata-skill/harness" dev /resume
 pnpm --dir "/Users/bytedance/luobata/bata-skill/harness" dev /harness --composition=research-only "<用户目标>"
 ```
 
+### 基于当前仓库文件作为目标输入
+
+```bash
+pnpm --dir "/Users/bytedance/luobata/bata-skill/harness" dev /harness --target todo.md
+```
+
+### 基于多个文件共同驱动
+
+```bash
+pnpm --dir "/Users/bytedance/luobata/bata-skill/harness" dev /harness --target architecture.md --target todo.md
+```
+
 ## Operating Instructions
 
 1. 如果用户目标是验证 slash 或 skill 注入是否生效，优先先跑一条 `plan` 或 `run`
 2. 如果用户明确说“恢复上次调试”，执行 `dev /resume`
-3. 输出时重点总结：
+3. 如果用户传入 `--target <文件>` 或 `--target=<文件>`，把它视为当前工作目录下的目标文件；支持重复传入多个 target
+4. 输出时重点总结：
    - 计划任务数
    - 选中的 composition
    - `report.summary`
    - `persisted.runDirectory`
-4. 如果怀疑 skill 没刷新，提醒用户重启 Coco 会话后重试 `/harndess-debug`
+5. 如果怀疑 skill 没刷新，提醒用户重启 Coco 会话后重试 `/harndess-debug`
 
 ## Examples
 

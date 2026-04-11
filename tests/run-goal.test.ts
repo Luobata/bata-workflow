@@ -201,4 +201,49 @@ describe('runGoal', () => {
     expect(report.summary.loopCount).toBe(1)
     expect(report.summary.loopedSourceTaskIds).toEqual(['T4'])
   })
+
+  it('将上游任务 summary 注入下游角色执行上下文', async () => {
+    const runDirectory = mkdtempSync(resolve(tmpdir(), 'harness-run-goal-deps-'))
+    const observedDependencies = new Map<string, string[]>()
+
+    class DependencyAwareAdapter implements CocoAdapter {
+      async execute({ assignment, dependencyResults }) {
+        observedDependencies.set(
+          assignment.task.id,
+          dependencyResults.map((dependency) => `${dependency.taskId}:${dependency.summary ?? ''}`)
+        )
+
+        return {
+          taskId: assignment.task.id,
+          role: assignment.roleDefinition.name,
+          model: assignment.modelResolution.model,
+          status: 'completed' as const,
+          summary: `${assignment.task.id} done by ${assignment.roleDefinition.name}`,
+          attempt: 1
+        }
+      }
+    }
+
+    const report = await runGoal({
+      input: { goal: '实现登录功能并补测试', teamName: 'default' },
+      adapter: new DependencyAwareAdapter(),
+      roleRegistry: buildRoleRegistry(loadRoles(rolesConfigPath)),
+      modelConfig: loadRoleModelConfig(roleModelConfigPath),
+      failurePolicyConfig: loadFailurePolicyConfig(failurePolicyConfigPath),
+      teamCompositionRegistry: loadTeamCompositionRegistry(teamCompositionConfigPath),
+      runDirectory,
+      maxConcurrency: 2
+    })
+
+    expect(observedDependencies.get('T2')).toEqual(['T1:T1 done by planner'])
+    expect(observedDependencies.get('T3')).toEqual(['T2:T2 done by coder'])
+    expect(observedDependencies.get('T4')).toEqual(['T2:T2 done by coder'])
+    expect(observedDependencies.get('T5')).toEqual([
+      'T1:T1 done by planner',
+      'T2:T2 done by coder',
+      'T3:T3 done by reviewer',
+      'T4:T4 done by tester'
+    ])
+    expect(report.results).toHaveLength(5)
+  })
 })

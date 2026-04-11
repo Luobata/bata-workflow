@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 
-import type { DispatchAssignment, TaskExecutionResult } from '../domain/types.js'
+import type { DispatchAssignment, TaskExecutionResult, UpstreamTaskContext } from '../domain/types.js'
 import { buildRolePromptSection } from '../team/prompt-templates.js'
 import type { RolePromptTemplateRegistry } from '../team/prompt-loader.js'
 import type { SkillRegistry } from '../team/skill-registry.js'
@@ -10,6 +10,7 @@ const execFileAsync = promisify(execFile)
 
 export interface CocoExecutionRequest {
   assignment: DispatchAssignment
+  dependencyResults: UpstreamTaskContext[]
 }
 
 export interface CocoRunner {
@@ -53,11 +54,22 @@ class ProcessCocoRunner implements CocoRunner {
 
 export function buildCocoPrompt(
   assignment: DispatchAssignment,
+  dependencyResults: UpstreamTaskContext[] = [],
   promptTemplates?: RolePromptTemplateRegistry,
   skillRegistry?: SkillRegistry
 ): string {
   const { task, modelResolution, roleDefinition } = assignment
   const acceptance = task.acceptanceCriteria.map((item, index) => `${index + 1}. ${item}`).join('\n')
+  const dependencySection =
+    dependencyResults.length === 0
+      ? ['上游任务结果:', '- none']
+      : [
+          '上游任务结果:',
+          ...dependencyResults.flatMap((dependency, index) => [
+            `${index + 1}. ${dependency.taskId} | role=${dependency.role} | taskType=${dependency.taskType} | status=${dependency.status} | attempt=${dependency.attempt ?? 'n/a'}`,
+            `   summary: ${dependency.summary ?? '(no summary)'}`
+          ])
+        ]
 
   return [
     '你是一个被 harness 调度的执行角色。请只完成当前任务，不要扩展范围。',
@@ -69,6 +81,7 @@ export function buildCocoPrompt(
     `模型来源: ${modelResolution.source}`,
     `任务标题: ${task.title}`,
     `任务描述: ${task.description}`,
+    ...dependencySection,
     '验收条件:',
     acceptance,
     '你必须只输出 JSON，不要输出 markdown 代码块，不要输出额外解释。',
@@ -142,8 +155,8 @@ export class CocoCliAdapter implements CocoAdapter {
     this.skillRegistry = options.skillRegistry
   }
 
-  async execute({ assignment }: CocoExecutionRequest): Promise<TaskExecutionResult> {
-    const prompt = buildCocoPrompt(assignment, this.promptTemplates, this.skillRegistry)
+  async execute({ assignment, dependencyResults }: CocoExecutionRequest): Promise<TaskExecutionResult> {
+    const prompt = buildCocoPrompt(assignment, dependencyResults, this.promptTemplates, this.skillRegistry)
     const args = buildCocoCliArgs({
       prompt,
       timeoutMs: this.timeoutMs,

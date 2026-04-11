@@ -33,6 +33,13 @@ export interface GoalInput {
   goal: string
   teamName?: string
   compositionName?: string
+  targetFile?: GoalTargetFile | null
+  targetFiles?: GoalTargetFile[]
+}
+
+export interface GoalTargetFile {
+  path: string
+  content: string
 }
 
 export interface Task {
@@ -213,6 +220,15 @@ export interface TaskExecutionResult {
   summary: string
   status: Extract<TaskStatus, 'completed' | 'failed'>
   attempt: number
+}
+
+export interface UpstreamTaskContext {
+  taskId: string
+  role: string
+  taskType: TaskType
+  status: TaskStatus
+  summary: string | null
+  attempt: number | null
 }
 
 export interface RunReport {

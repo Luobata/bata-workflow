@@ -72,4 +72,51 @@ describe('planner and dispatcher', () => {
     expect(plan.tasks.find((task) => task.taskType === 'coordination')?.dependsOn).toEqual(['T1', 'T2'])
     expect(verification.ok).toBe(true)
   })
+
+  it('支持通过 target 文件驱动规划并注入任务描述', () => {
+    const plan = buildPlan(
+      {
+        goal: '',
+        teamName: 'default',
+        targetFiles: [
+          {
+            path: '/tmp/todo.md',
+            content: '实现登录功能\n补充测试\n做代码审查'
+          }
+        ]
+      },
+      loadTeamCompositionRegistry(teamCompositionConfigPath)
+    )
+
+    expect(plan.goal).toBe('基于目标文件 /tmp/todo.md 执行')
+    expect(plan.tasks.map((task) => task.taskType)).toEqual(['planning', 'coding', 'code-review', 'testing', 'coordination'])
+    expect(plan.tasks[0]?.description).toContain('参考文件: /tmp/todo.md')
+    expect(plan.tasks[0]?.description).toContain('实现登录功能')
+  })
+
+  it('支持多个 target 文件共同驱动规划', () => {
+    const plan = buildPlan(
+      {
+        goal: '',
+        teamName: 'default',
+        targetFiles: [
+          {
+            path: '/tmp/architecture.md',
+            content: '需要先调研现有登录架构'
+          },
+          {
+            path: '/tmp/todo.md',
+            content: '实现登录功能\n补充测试'
+          }
+        ]
+      },
+      loadTeamCompositionRegistry(teamCompositionConfigPath)
+    )
+
+    expect(plan.goal).toBe('基于 2 个目标文件执行')
+    expect(plan.summary).toContain('2 个参考文件')
+    expect(plan.tasks.map((task) => task.taskType)).toEqual(['planning', 'research', 'coding', 'code-review', 'testing', 'coordination'])
+    expect(plan.tasks[0]?.description).toContain('参考文件 1: /tmp/architecture.md')
+    expect(plan.tasks[0]?.description).toContain('参考文件 2: /tmp/todo.md')
+  })
 })

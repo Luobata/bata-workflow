@@ -148,7 +148,8 @@ async function executeClaim(params: {
   })
 
   try {
-    const result = await adapter.execute({ assignment } satisfies CocoExecutionRequest)
+    const dependencyResults = queue.getDependencyTaskContexts(taskId)
+    const result = await adapter.execute({ assignment, dependencyResults } satisfies CocoExecutionRequest)
     const finishedAt = now()
     const finalResult: TaskExecutionResult = { ...result, attempt: claim.attempt }
 

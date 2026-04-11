@@ -11,6 +11,7 @@ import type {
   RuntimeSnapshot,
   RuntimeTaskState,
   TaskExecutionResult,
+  UpstreamTaskContext,
   WorkerPoolConfig,
   WorkerSnapshot
 } from '../domain/types.js'
@@ -194,6 +195,25 @@ export class PersistentTaskQueue {
 
   getTaskState(taskId: string): RuntimeTaskState {
     return this.requireTask(taskId).state
+  }
+
+  getDependencyTaskContexts(taskId: string): UpstreamTaskContext[] {
+    const assignment = this.assignmentMap.get(taskId)
+    if (!assignment) {
+      return []
+    }
+
+    return assignment.task.dependsOn.map((dependencyId) => {
+      const dependencyRecord = this.requireTask(dependencyId)
+      return {
+        taskId: dependencyId,
+        role: dependencyRecord.assignment.roleDefinition.name,
+        taskType: dependencyRecord.assignment.task.taskType,
+        status: dependencyRecord.state.status,
+        summary: dependencyRecord.result?.summary ?? null,
+        attempt: dependencyRecord.result?.attempt ?? null
+      }
+    })
   }
 
   getWorker(workerId: string): WorkerSnapshot {

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -17,6 +18,7 @@ import { loadTeamCompositionRegistry } from '../team/team-composition-loader.js'
 import { loadSlashCommandRegistry, resolveSlashCommand } from './slash-command-loader.js'
 import { runGoal } from '../orchestrator/run-goal.js'
 import { verifyAssignments, verifyRun } from '../verification/index.js'
+import type { GoalTargetFile } from '../domain/types.js'
 
 const root = resolve(fileURLToPath(new URL('../../', import.meta.url)))
 const roleModelConfigPath = resolve(root, 'configs/role-models.yaml')
@@ -28,20 +30,63 @@ const teamCompositionConfigPath = resolve(root, 'configs/team-compositions.yaml'
 const slashCommandConfigPath = resolve(root, 'configs/slash-commands.yaml')
 const stateRoot = resolve(root, '.harness/state')
 
+function appendFlag(flags: Map<string, string>, key: string, value: string) {
+  if (key === 'target' && flags.has(key)) {
+    flags.set(key, `${flags.get(key)},${value}`)
+    return
+  }
+
+  flags.set(key, value)
+}
+
 function parseFlags(args: string[]): { flags: Map<string, string>; positionals: string[] } {
   const flags = new Map<string, string>()
   const positionals: string[] = []
 
-  for (const arg of args) {
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index]!
     if (arg.startsWith('--')) {
-      const [key, value = 'true'] = arg.slice(2).split('=')
-      flags.set(key, value)
+      const flag = arg.slice(2)
+      const separatorIndex = flag.indexOf('=')
+
+      if (separatorIndex >= 0) {
+        appendFlag(flags, flag.slice(0, separatorIndex), flag.slice(separatorIndex + 1))
+        continue
+      }
+
+      const nextArg = args[index + 1]
+      if (nextArg && !nextArg.startsWith('--')) {
+        appendFlag(flags, flag, nextArg)
+        index += 1
+        continue
+      }
+
+      appendFlag(flags, flag, 'true')
     } else {
       positionals.push(arg)
     }
   }
 
   return { flags, positionals }
+}
+
+function readTargetFile(targetPath: string): GoalTargetFile {
+  const resolvedPath = resolve(process.cwd(), targetPath)
+  const raw = readFileSync(resolvedPath, 'utf8').trim()
+  const content = raw.length > 2000 ? `${raw.slice(0, 2000)}\n...[truncated]` : raw
+
+  return {
+    path: resolvedPath,
+    content
+  }
+}
+
+function readTargetFiles(targetValue: string): GoalTargetFile[] {
+  return targetValue
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((targetPath) => readTargetFile(targetPath))
 }
 
 async function main(): Promise<void> {
@@ -52,9 +97,18 @@ async function main(): Promise<void> {
   const command = slashResolution?.command ?? rawCommand
   const flags = slashResolution?.flags ?? parsedFlags
   const goal = positionals.join(' ').trim()
+  const targetFlag = flags.get('target')
+  const targetFiles = targetFlag ? readTargetFiles(targetFlag) : []
+  const effectiveGoal =
+    goal ||
+    (targetFiles.length === 1
+      ? `基于目标文件 ${targetFiles[0]!.path} 执行`
+      : targetFiles.length > 1
+        ? `基于 ${targetFiles.length} 个目标文件执行`
+        : '')
 
-  if (!goal && command !== 'resume') {
-    throw new Error('请提供目标，例如：pnpm plan "实现登录功能并补测试"')
+  if (!effectiveGoal && command !== 'resume') {
+    throw new Error('请提供目标，或通过 --target todo.md / --target=a.md,b.md 指定目标文件')
   }
 
   const roles = loadRoles(rolesConfigPath)
@@ -85,7 +139,10 @@ async function main(): Promise<void> {
   const maxConcurrency = maxConcurrencyFlag ? Number(maxConcurrencyFlag) : undefined
 
   if (command === 'plan') {
-    const plan = applyFailurePolicies(buildPlan({ goal, teamName, compositionName }, teamCompositionRegistry), failurePolicyConfig)
+    const plan = applyFailurePolicies(
+      buildPlan({ goal: effectiveGoal, teamName, compositionName, targetFiles }, teamCompositionRegistry),
+      failurePolicyConfig
+    )
     const assignments = dispatchPlan(plan, roleRegistry, modelConfig, teamName)
     const { buildExecutionBatches } = await import('../runtime/scheduler.js')
     const batches = buildExecutionBatches(assignments)
@@ -96,14 +153,14 @@ async function main(): Promise<void> {
   }
 
   if (command === 'run') {
-    const runDirectory = createRunDirectory(stateRoot, goal)
+    const runDirectory = createRunDirectory(stateRoot, effectiveGoal)
     const adapter =
       adapterKind === 'coco-cli'
         ? new CocoCliAdapter({ timeoutMs, allowedTools, yolo: flags.get('yolo') === 'true', promptTemplates, skillRegistry })
         : new DryRunCocoAdapter()
 
     const report = await runGoal({
-      input: { goal, teamName, compositionName },
+      input: { goal: effectiveGoal, teamName, compositionName, targetFiles },
       adapter,
       roleRegistry,
       modelConfig,

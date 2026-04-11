@@ -52,10 +52,31 @@ describe('coco adapter', () => {
   })
 
   it('生成带角色模板和技能说明的 prompt', () => {
-    const prompt = buildCocoPrompt(assignment, undefined, skillRegistry)
+    const prompt = buildCocoPrompt(assignment, [], undefined, skillRegistry)
     expect(prompt).toContain('你是实现者')
     expect(prompt).toContain('implementation: 实现与重构代码')
     expect(prompt).toContain('JSON schema')
+  })
+
+  it('把上游任务结果注入 prompt', () => {
+    const prompt = buildCocoPrompt(
+      assignment,
+      [
+        {
+          taskId: 'T0',
+          role: 'planner',
+          taskType: 'planning',
+          status: 'completed',
+          summary: '已经完成方案拆解',
+          attempt: 1
+        }
+      ],
+      undefined,
+      skillRegistry
+    )
+    expect(prompt).toContain('上游任务结果:')
+    expect(prompt).toContain('T0 | role=planner | taskType=planning | status=completed | attempt=1')
+    expect(prompt).toContain('summary: 已经完成方案拆解')
   })
 
   it('允许通过外部 prompt 配置覆盖角色 opening', () => {
@@ -70,7 +91,7 @@ describe('coco adapter', () => {
       }
     }
 
-    const prompt = buildCocoPrompt(assignment, templates, skillRegistry)
+    const prompt = buildCocoPrompt(assignment, [], templates, skillRegistry)
     expect(prompt).toContain('你是外部配置的实现者。')
   })
 
@@ -86,7 +107,7 @@ describe('coco adapter', () => {
       }
     })
 
-    const result = await adapter.execute({ assignment })
+    const result = await adapter.execute({ assignment, dependencyResults: [] })
     expect(result.status).toBe('completed')
     expect(result.summary).toBe('mock success')
     expect(result.model).toBe('gpt5.3-codex')
@@ -105,7 +126,7 @@ describe('coco adapter', () => {
       }
     })
 
-    const result = await adapter.execute({ assignment })
+    const result = await adapter.execute({ assignment, dependencyResults: [] })
     expect(result.status).toBe('completed')
     expect(result.summary).toBe('plain text summary')
   })
