@@ -1,3 +1,6 @@
+import { spawnSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
@@ -15,6 +18,9 @@ const roleModelConfigPath = resolve(import.meta.dirname, '../configs/role-models
 const rolesConfigPath = resolve(import.meta.dirname, '../configs/roles.yaml')
 const failurePolicyConfigPath = resolve(import.meta.dirname, '../configs/failure-policies.yaml')
 const teamCompositionConfigPath = resolve(import.meta.dirname, '../configs/team-compositions.yaml')
+const repoRoot = resolve(import.meta.dirname, '..')
+const cliPath = resolve(repoRoot, 'src/cli/index.ts')
+const tsxCliPath = resolve(repoRoot, 'node_modules/tsx/dist/cli.mjs')
 
 describe('planner and dispatcher', () => {
   it('为实现类目标生成 coding/testing/review 任务并分配模型', () => {
@@ -118,5 +124,95 @@ describe('planner and dispatcher', () => {
     expect(plan.tasks.map((task) => task.taskType)).toEqual(['planning', 'research', 'coding', 'code-review', 'testing', 'coordination'])
     expect(plan.tasks[0]?.description).toContain('参考文件 1: /tmp/architecture.md')
     expect(plan.tasks[0]?.description).toContain('参考文件 2: /tmp/todo.md')
+  })
+
+  it('支持基于方案文档与 todo 拆出更细粒度的推进任务', () => {
+    const plan = buildPlan(
+      {
+        goal: '',
+        teamName: 'default',
+        targetFiles: [
+          {
+            path: '/tmp/design.md',
+            content: ['# 登录改造方案', '## 核心任务', '- [ ] 梳理现有登录链路与风险', '- [ ] 实现统一认证中间件', '- [ ] 补充登录回归测试'].join('\n')
+          }
+        ]
+      },
+      loadTeamCompositionRegistry(teamCompositionConfigPath)
+    )
+
+    expect(plan.tasks.length).toBeGreaterThan(5)
+    expect(plan.tasks.some((task) => task.title.includes('梳理现有登录链路与风险'))).toBe(true)
+    expect(plan.tasks.some((task) => task.title.includes('实现统一认证中间件'))).toBe(true)
+    expect(plan.tasks.some((task) => task.title.includes('补充登录回归测试'))).toBe(true)
+  })
+
+  it('显式 composition 时不会被文档拆解扩展出额外 taskType', () => {
+    const plan = buildPlan(
+      {
+        goal: '',
+        teamName: 'default',
+        compositionName: 'research-only',
+        targetFiles: [
+          {
+            path: '/tmp/design.md',
+            content: ['# 登录改造方案', '## 核心任务', '- [ ] 梳理现有登录链路与风险', '- [ ] 实现统一认证中间件', '- [ ] 补充登录回归测试'].join('\n')
+          }
+        ]
+      },
+      loadTeamCompositionRegistry(teamCompositionConfigPath)
+    )
+
+    expect(plan.tasks.map((task) => task.taskType)).toEqual(['planning', 'research', 'coordination'])
+  })
+
+  it('支持通过 -dir 与 -target 组合读取目录和文件目标', () => {
+    const workspace = mkdtempSync(resolve(tmpdir(), 'harness-cli-'))
+    const targetDirectory = resolve(workspace, 'targets')
+    const nestedDirectory = resolve(targetDirectory, 'nested')
+    const hiddenDirectory = resolve(targetDirectory, '.hidden-dir')
+    const explicitTarget = resolve(workspace, 'manual.md')
+    const todoTarget = resolve(targetDirectory, 'todo.md')
+    const specTarget = resolve(nestedDirectory, 'spec.md')
+    const hiddenTarget = resolve(hiddenDirectory, 'notes.md')
+    const ignoredBinary = resolve(targetDirectory, 'diagram.png')
+    const ignoredLog = resolve(targetDirectory, 'debug.log')
+
+    mkdirSync(nestedDirectory, { recursive: true })
+    mkdirSync(hiddenDirectory, { recursive: true })
+    writeFileSync(todoTarget, '实现登录功能\n补充测试', 'utf8')
+    writeFileSync(specTarget, '先调研现有登录架构', 'utf8')
+    writeFileSync(hiddenTarget, '记录隐藏目录中的约束说明', 'utf8')
+    writeFileSync(explicitTarget, '补充代码审查步骤', 'utf8')
+    writeFileSync(ignoredBinary, 'PNGDATA', 'utf8')
+    writeFileSync(ignoredLog, 'debug info', 'utf8')
+
+    const result = spawnSync(process.execPath, [tsxCliPath, cliPath, 'plan', '-dir', targetDirectory, '-target', explicitTarget], {
+      cwd: repoRoot,
+      encoding: 'utf8'
+    })
+
+    expect(result.status).toBe(0)
+    expect(result.stderr).toBe('')
+
+    const output = JSON.parse(result.stdout) as {
+      plan: {
+        goal: string
+        summary: string
+        tasks: Array<{ description: string }>
+      }
+    }
+
+    expect(output.plan.goal).toBe('基于 4 个目标文件执行')
+    expect(output.plan.summary).toContain('4 个参考文件')
+    expect(output.plan.tasks[0]?.description).toContain(`参考文件 1: ${explicitTarget}`)
+    expect(output.plan.tasks[0]?.description).toContain(`参考文件 2: ${hiddenTarget}`)
+    expect(output.plan.tasks[0]?.description).toContain(`参考文件 3: ${resolve(targetDirectory, 'nested/spec.md')}`)
+    expect(output.plan.tasks[0]?.description).toContain(`参考文件 4: ${todoTarget}`)
+    expect(output.plan.tasks[0]?.description).not.toContain(ignoredBinary)
+    expect(output.plan.tasks[0]?.description).not.toContain(ignoredLog)
+    expect(output.plan.tasks[0]?.description).toContain('记录隐藏目录中的约束说明')
+    expect(output.plan.tasks[0]?.description).toContain('先调研现有登录架构')
+    expect(output.plan.tasks[0]?.description).toContain('补充代码审查步骤')
   })
 })

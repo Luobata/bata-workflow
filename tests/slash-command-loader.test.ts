@@ -14,6 +14,7 @@ describe('slash command loader', () => {
     expect(resolved).not.toBeNull()
     expect(resolved?.command).toBe('run')
     expect(resolved?.flags.get('teamName')).toBe('default')
+    expect(resolved?.flags.get('adapter')).toBe('coco-cli')
     expect(resolved?.flags.has('composition')).toBe(false)
   })
 
@@ -25,6 +26,26 @@ describe('slash command loader', () => {
     expect(resolved?.command).toBe('run')
     expect(resolved?.flags.get('composition')).toBe('review-only')
     expect(resolved?.flags.get('teamName')).toBe('default')
+  })
+
+  it('把 /harness-debug 映射为默认 run 调试入口', () => {
+    const registry = loadSlashCommandRegistry(configPath)
+    const resolved = resolveSlashCommand('/harness-debug', new Map([['dir', '/tmp/docs']]), registry)
+
+    expect(resolved).not.toBeNull()
+    expect(resolved?.command).toBe('run')
+    expect(resolved?.flags.get('adapter')).toBe('coco-cli')
+    expect(resolved?.flags.get('dir')).toBe('/tmp/docs')
+  })
+
+  it('兼容旧拼写 /harndess-debug', () => {
+    const registry = loadSlashCommandRegistry(configPath)
+    const resolved = resolveSlashCommand('/harndess-debug', new Map([['target', '/tmp/todo.md']]), registry)
+
+    expect(resolved).not.toBeNull()
+    expect(resolved?.command).toBe('run')
+    expect(resolved?.flags.get('adapter')).toBe('coco-cli')
+    expect(resolved?.flags.get('target')).toBe('/tmp/todo.md')
   })
 
   it('允许显式 flags 覆盖 slash command 默认值', () => {

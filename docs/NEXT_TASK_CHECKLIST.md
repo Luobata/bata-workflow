@@ -1,6 +1,6 @@
 # Harness 下一阶段细粒度任务清单
 
-> 目标：让新会话拿到这份清单后，可以直接进入“fix/verify loop 独立路由 + report summary 聚合 + 配置继续外部化”阶段，而不用重新梳理前面的 queue/runtime 演进。
+> 目标：让新会话拿到这份清单后，可以直接进入 `watch` 的下一阶段演进：`detailMode` 切换、产物/验证证据可视化、结构化执行结果展示，而不用重新梳理前面的 watch/TUI 演进。
 
 ## A. 启动阶段
 
@@ -8,29 +8,26 @@
 
 - 先读 `docs/NEXT_SESSION_ENTRY.md`
 - 再读 `docs/NEXT_TASK_CHECKLIST.md`
-- 再读 `docs/HANDOFF_STATUS_2026-04-11.md`
+- 再读 `docs/HANDOFF_STATUS_2026-04-12.md`
 - 再按顺序读：
-  - `src/domain/types.ts`
-  - `src/runtime/task-queue.ts`
-  - `src/runtime/task-store.ts`
-  - `src/runtime/team-runtime.ts`
-  - `src/runtime/failure-policy.ts`
-  - `src/runtime/recovery.ts`
-  - `src/runtime/state-store.ts`
-  - `src/dispatcher/dispatcher.ts`
+  - `src/tui/watch-state.ts`
+  - `src/tui/render.ts`
+  - `src/tui/watch.ts`
   - `src/cli/index.ts`
+  - `src/runtime/state-store.ts`
+  - `src/planner/planner.ts`
 
 ### A2. 确认工作区状态
 
 - 查看 `git status`
 - 确认当前是否已经带有上一轮未提交实现
 - 不要重复实现已经存在的：
-  - `task queue / task store` 原子落盘
-  - `worker pool + maxConcurrency`
-  - `queue-based resume`
-  - `failure fallback`
-  - 显式 `fix/verify loop`
-  - `runtime.dynamicTaskStats / runtime.loopSummaries`
+  - `/harness-debug` 文档驱动入口
+  - `watch` 终端 TUI 的总览 / workers / hotTasks / recentEvents
+  - `selectedTask` 排障详情
+  - `↑/↓/j/k/q/r/p` 交互
+  - `Task Details` 中的 `Overview + Collaboration` 合并视图
+  - `detailMode = combined|overview|collaboration` 扩展位
 
 ---
 
@@ -72,109 +69,97 @@
 
 ---
 
-## C. 下一阶段主目标：把 loop 做成真正独立能力
+## C. 下一阶段主目标：把 watch 的详情面板做成可切换视图
 
-### C1. loop 的独立 role/model 解析
-
-当前问题：
-
-- `fixVerifyLoop.remediationRole` 已进入 schema
-- 但 runtime 仍主要依赖已解析的 `fallback` 目标
-
-下一步目标：
-
-- loop 使用独立的 remediation role/model 解析路径
-- 不再把 remediation 的角色/模型选择绑定到 fallback 语义
-- 支持：
-  - `remediationRole`
-  - `remediationModel`
-  - `remediationTaskType`
-  - `remediationSkills`
-
-建议修改：
-
-- `src/runtime/team-runtime.ts`
-- `src/dispatcher/dispatcher.ts`
-- `src/runtime/failure-policy.ts`
-- `src/role-model-config/resolver.ts`
-
-### C2. loop 轮次与策略类型继续扩展
-
-当前已做：
-
-- `maxRounds`
-- remediation task 模板
-
-下一步建议：
-
-- 支持多种 loop 策略类型：
-  - `fix-then-retry-source`
-  - `spawn-separate-verify-task`
-  - `fix-only`
-- 区分 remediation task 和 verify task 的统计
-- 为 loop 增加更明确的 terminal reason
-
----
-
-## D. 下一阶段主目标：补 report 顶层 summary
-
-### D1. 新增 report.summary 聚合
+### C1. detailMode 切换（方案 B）
 
 当前现状：
 
-- loop 统计已经在 `runtime.dynamicTaskStats` / `runtime.loopSummaries`
-- 但没有适合 CLI / dashboard 直接消费的顶层 summary
+- `watch.ts` 已有 `detailMode = 'combined' | 'overview' | 'collaboration'` 状态占位
+- `render.ts` 已把详情结构拆成 `Overview` 与 `Collaboration` 两个内部区块
+- 当前还未实现 detailMode 真实切换，仍固定展示 combined
+
+下一步目标：
+
+- 支持详情面板在以下模式间切换：
+  - `combined`
+  - `overview`
+  - `collaboration`
+- 增加最小切换快捷键，不破坏现有任务选择交互
+
+建议修改：
+
+- `src/tui/watch.ts`
+- `src/tui/render.ts`
+- `tests/watch-command.test.ts`
+- `tests/watch-state.test.ts`
+
+### C2. 详情面板继续补执行证据
+
+当前已做：
+
+- 基础排障字段
+- mailbox / upstream / handoff / collab status
+
+下一步建议：
+
+- 在详情面板继续补：
+  - `artifacts`
+  - `verification`
+  - `blockers`
+- 让 tester/reviewer 结果不只依赖 summary
+- 为后续 dashboard/Web 视图保留统一结构
+
+---
+
+## D. 下一阶段主目标：把结构化执行结果做成 watch 可消费数据
+
+### D1. 扩展任务执行结果 schema
+
+当前现状：
+
+- `watch` 主要展示 summary 与协作线索
+- 执行结果还没有稳定的 `artifacts / verification / blockers` 展示面
 
 建议新增：
 
-- `report.summary.generatedTaskCount`
-- `report.summary.loopCount`
-- `report.summary.loopedSourceTaskIds`
-- `report.summary.failedTaskCount`
-- `report.summary.completedTaskCount`
-- `report.summary.retryTaskCount`
+- `TaskExecutionResult.artifacts`
+- `TaskExecutionResult.verification`
+- `TaskExecutionResult.blockers`
 
 建议修改：
 
 - `src/domain/types.ts`
-- `src/orchestrator/run-goal.ts`
-- `src/runtime/recovery.ts`
-- `src/runtime/task-queue.ts`
+- `src/runtime/coco-adapter.ts`
+- `src/verification/index.ts`
+- `src/tui/watch-state.ts`
 
-### D2. 保证 resume 后 summary 一致
+### D2. watch 中接入执行证据区块
 
 目标：
 
-- `run` 与 `resume` 输出的 summary 结构一致
-- 动态任务在恢复后重新聚合时不丢失
-- CLI 输出能直接用于后续 dashboard / trace
+- `watch` 详情面板可直接消费结构化执行结果
+- 运行中与恢复后查看到的数据结构一致
+- 后续 Web dashboard 可复用同一套聚合模型
 
 ---
 
-## E. 配置外部化后续项
+## E. watch 的中长期方向
 
-### E1. skill registry 外部化
-
-当前现状：
-
-- `src/team/skill-registry.ts` 仍是 TS 常量
-
-下一步建议：
-
-- 新增 `configs/skills.yaml`
-- 新增 `src/team/skill-loader.ts`
-- 支持 role -> skills 的完全配置化
-
-### E2. role composition 配置化
+### E1. mailbox drill-down / 详情页
 
 建议新增：
 
-- `configs/team-compositions.yaml`
+- mailbox 明细视图
+- 选中消息后显示完整内容
+- future: detail tab 或弹出式详情页
+
+### E2. Web dashboard
 
 目标：
 
-- 让不同目标直接选 composition
-- 例如：`feature-dev`、`bugfix`、`review-only`、`research-only`
+- 重用 `watch-state` 聚合模型
+- 提供更高可读性的任务泳道 / 事件流 / 协作面板
 
 ---
 
@@ -182,18 +167,17 @@
 
 ### F1. 必补测试
 
-- remediation role/model 独立解析测试
-- loop `maxRounds` 上限测试
-- report summary 聚合测试
-- resume 后 summary 一致性测试
-- 单独 verify task 策略测试（如果本轮实现）
+- detailMode 切换测试
+- artifact/verification/blockers 聚合测试
+- mailbox 明细与长文本截断测试
+- watch 恢复后详情视图一致性测试
 
 ### F2. 命令级验证
 
-- `pnpm --dir "/Users/bytedance/luobata/bata-skill/harness" test`
+- `pnpm --dir "/Users/bytedance/luobata/bata-skill/harness" test -- watch-command watch-state`
 - `pnpm --dir "/Users/bytedance/luobata/bata-skill/harness" build`
-- `pnpm --dir "/Users/bytedance/luobata/bata-skill/harness" orchestrate --adapter=dry-run --maxConcurrency=2 "实现登录功能并补测试"`
-- `pnpm --dir "/Users/bytedance/luobata/bata-skill/harness" resume --adapter=dry-run`
+- `pnpm --dir "/Users/bytedance/luobata/bata-skill/harness" dev /harness-debug --adapter=dry-run -dir <docs>`
+- `pnpm --dir "/Users/bytedance/luobata/bata-skill/harness" dev watch --reportPath <report.json>`
 
 ---
 
@@ -201,18 +185,18 @@
 
 ### Commit 1
 
-- loop 独立 remediation role/model 解析
-- 补相关 schema / resolver / runtime 测试
+- detailMode 切换
+- 补 watch 交互与渲染测试
 
 ### Commit 2
 
-- `report.summary` 顶层聚合
-- run / resume 统一 summary 输出
+- 结构化执行结果 `artifacts / verification / blockers`
+- watch 详情面板接入执行证据
 
 ### Commit 3
 
-- `skills.yaml` / `team-compositions.yaml`
-- CLI 选择 composition
+- mailbox drill-down / detail tabs
+- 或 Web dashboard 起步
 
 ---
 

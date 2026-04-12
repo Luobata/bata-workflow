@@ -8,11 +8,13 @@ tags:
   - coco
 ---
 
-# Harndess Debug
+# Harness Debug
 
 ## Overview
 
-当用户显式使用 `/harndess-debug` 时，使用这个 skill。
+当用户显式使用 `/harness-debug` 时，使用这个 skill。
+
+兼容旧拼写 `/harndess-debug`，但推荐统一改用 `/harness-debug`。
 
 这个 skill 的全局 Coco 安装目录应当是一个软链，指向仓库内目录：
 
@@ -34,7 +36,7 @@ tags:
 ### 默认调试执行
 
 ```bash
-pnpm --dir "/Users/bytedance/luobata/bata-skill/harness" dev /harness "<用户目标>"
+pnpm --dir "/Users/bytedance/luobata/bata-skill/harness" dev /harness-debug "<用户目标>"
 ```
 
 ### 调试仅计划
@@ -52,48 +54,55 @@ pnpm --dir "/Users/bytedance/luobata/bata-skill/harness" dev /resume
 ### 调试特定 composition
 
 ```bash
-pnpm --dir "/Users/bytedance/luobata/bata-skill/harness" dev /harness --composition=research-only "<用户目标>"
+pnpm --dir "/Users/bytedance/luobata/bata-skill/harness" dev /harness-debug --composition=research-only "<用户目标>"
 ```
 
 ### 基于当前仓库文件作为目标输入
 
 ```bash
-pnpm --dir "/Users/bytedance/luobata/bata-skill/harness" dev /harness --target todo.md
+pnpm --dir "/Users/bytedance/luobata/bata-skill/harness" dev /harness-debug --target todo.md
+```
+
+### 基于文档目录驱动
+
+```bash
+pnpm --dir "/Users/bytedance/luobata/bata-skill/harness" dev /harness-debug --dir docs
 ```
 
 ### 基于多个文件共同驱动
 
 ```bash
-pnpm --dir "/Users/bytedance/luobata/bata-skill/harness" dev /harness --target architecture.md --target todo.md
+pnpm --dir "/Users/bytedance/luobata/bata-skill/harness" dev /harness-debug --target architecture.md --target todo.md
 ```
 
 ## Operating Instructions
 
 1. 如果用户目标是验证 slash 或 skill 注入是否生效，优先先跑一条 `plan` 或 `run`
 2. 如果用户明确说“恢复上次调试”，执行 `dev /resume`
-3. 如果用户传入 `--target <文件>` 或 `--target=<文件>`，把它视为当前工作目录下的目标文件；支持重复传入多个 target
+3. 如果用户传入 `--target <文件>` / `--target=<文件>` / `--dir <目录>`，把它视为当前工作目录下的目标输入；支持重复传入多个 target/dir
+4. 路径尽量传绝对路径；如果传相对路径，它会基于执行命令时的 `cwd` 解析
 4. 输出时重点总结：
    - 计划任务数
    - 选中的 composition
    - `report.summary`
    - `persisted.runDirectory`
-5. 如果怀疑 skill 没刷新，提醒用户重启 Coco 会话后重试 `/harndess-debug`
+5. 如果怀疑 skill 没刷新，提醒用户重启 Coco 会话后重试 `/harness-debug`
 
 ## Examples
 
 ### 用户说
 
-`/harndess-debug 实现登录功能并补测试`
+`/harness-debug 实现登录功能并补测试`
 
 优先执行：
 
 ```bash
-pnpm --dir "/Users/bytedance/luobata/bata-skill/harness" dev /harness "实现登录功能并补测试"
+pnpm --dir "/Users/bytedance/luobata/bata-skill/harness" dev /harness-debug "实现登录功能并补测试"
 ```
 
 ### 用户说
 
-`/harndess-debug 继续上次运行`
+`/harness-debug 继续上次运行`
 
 优先执行：
 

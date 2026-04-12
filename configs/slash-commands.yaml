@@ -1,10 +1,17 @@
 version: 1
 defaults:
   teamName: default
+  adapter: coco-cli
 commands:
   harness:
     action: run
     description: 通用 harness 入口，按目标或显式 composition 执行
+  harness-debug:
+    action: run
+    description: 调试文档驱动的 harness 入口，支持 --dir/--target 输入
+  harndess-debug:
+    action: run
+    description: 兼容旧拼写的 harness-debug 调试入口
   plan:
     action: plan
     description: 仅生成计划，不执行任务

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { readdirSync, readFileSync } from 'node:fs'
+import { extname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { dispatchPlan } from '../dispatcher/dispatcher.js'
@@ -29,9 +29,12 @@ const skillsConfigPath = resolve(root, 'configs/skills.yaml')
 const teamCompositionConfigPath = resolve(root, 'configs/team-compositions.yaml')
 const slashCommandConfigPath = resolve(root, 'configs/slash-commands.yaml')
 const stateRoot = resolve(root, '.harness/state')
+const MAX_TARGET_FILE_CHARS = 4000
+const TARGET_TEXT_FILE_EXTENSIONS = new Set(['.md', '.markdown', '.mdx', '.txt', '.yaml', '.yml', '.json'])
+const IGNORED_TARGET_DIRECTORIES = new Set(['.git', '.harness', 'node_modules', 'dist', 'build', 'coverage'])
 
 function appendFlag(flags: Map<string, string>, key: string, value: string) {
-  if (key === 'target' && flags.has(key)) {
+  if ((key === 'target' || key === 'dir') && flags.has(key)) {
     flags.set(key, `${flags.get(key)},${value}`)
     return
   }
@@ -45,8 +48,10 @@ function parseFlags(args: string[]): { flags: Map<string, string>; positionals: 
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]!
-    if (arg.startsWith('--')) {
-      const flag = arg.slice(2)
+    const prefix = arg.startsWith('--') ? '--' : arg.startsWith('-') && arg.length > 1 ? '-' : ''
+
+    if (prefix) {
+      const flag = arg.slice(prefix.length)
       const separatorIndex = flag.indexOf('=')
 
       if (separatorIndex >= 0) {
@@ -55,7 +60,7 @@ function parseFlags(args: string[]): { flags: Map<string, string>; positionals: 
       }
 
       const nextArg = args[index + 1]
-      if (nextArg && !nextArg.startsWith('--')) {
+      if (nextArg && !nextArg.startsWith('-')) {
         appendFlag(flags, flag, nextArg)
         index += 1
         continue
@@ -70,23 +75,86 @@ function parseFlags(args: string[]): { flags: Map<string, string>; positionals: 
   return { flags, positionals }
 }
 
-function readTargetFile(targetPath: string): GoalTargetFile {
-  const resolvedPath = resolve(process.cwd(), targetPath)
+function normalizeTargetContent(raw: string): string {
+  const trimmed = raw.trim()
+  return trimmed.length > MAX_TARGET_FILE_CHARS ? `${trimmed.slice(0, MAX_TARGET_FILE_CHARS)}\n...[truncated]` : trimmed
+}
+
+function readTargetFileAtPath(resolvedPath: string): GoalTargetFile {
   const raw = readFileSync(resolvedPath, 'utf8').trim()
-  const content = raw.length > 2000 ? `${raw.slice(0, 2000)}\n...[truncated]` : raw
 
   return {
     path: resolvedPath,
-    content
+    content: normalizeTargetContent(raw)
   }
 }
 
-function readTargetFiles(targetValue: string): GoalTargetFile[] {
-  return targetValue
+function readTargetFile(targetPath: string): GoalTargetFile {
+  return readTargetFileAtPath(resolve(process.cwd(), targetPath))
+}
+
+function splitFlagValues(rawValue: string): string[] {
+  return rawValue
     .split(',')
     .map((item) => item.trim())
     .filter(Boolean)
-    .map((targetPath) => readTargetFile(targetPath))
+}
+
+function readTargetFiles(targetValue: string): GoalTargetFile[] {
+  return splitFlagValues(targetValue).map((targetPath) => readTargetFile(targetPath))
+}
+
+function shouldIgnoreDirectoryEntry(name: string, isDirectory: boolean): boolean {
+  return isDirectory && IGNORED_TARGET_DIRECTORIES.has(name)
+}
+
+function isSupportedTargetFile(filePath: string): boolean {
+  return TARGET_TEXT_FILE_EXTENSIONS.has(extname(filePath).toLowerCase())
+}
+
+function collectDirectoryFiles(directoryPath: string): string[] {
+  const entries = readdirSync(directoryPath, { withFileTypes: true })
+    .sort((left, right) => left.name.localeCompare(right.name, 'zh-Hans-CN'))
+
+  return entries.flatMap((entry) => {
+    if (shouldIgnoreDirectoryEntry(entry.name, entry.isDirectory())) {
+      return []
+    }
+
+    const resolvedPath = resolve(directoryPath, entry.name)
+
+    if (entry.isDirectory()) {
+      return collectDirectoryFiles(resolvedPath)
+    }
+
+    if (entry.isFile()) {
+      if (!isSupportedTargetFile(resolvedPath)) {
+        return []
+      }
+
+      return [resolvedPath]
+    }
+
+    return []
+  })
+}
+
+function readTargetDirectories(dirValue: string): GoalTargetFile[] {
+  return splitFlagValues(dirValue).flatMap((directoryPath) => collectDirectoryFiles(resolve(process.cwd(), directoryPath))).map((filePath) => readTargetFileAtPath(filePath))
+}
+
+function mergeTargetFiles(...groups: GoalTargetFile[][]): GoalTargetFile[] {
+  const deduped = new Map<string, GoalTargetFile>()
+
+  for (const group of groups) {
+    for (const targetFile of group) {
+      if (!deduped.has(targetFile.path)) {
+        deduped.set(targetFile.path, targetFile)
+      }
+    }
+  }
+
+  return Array.from(deduped.values())
 }
 
 async function main(): Promise<void> {
@@ -98,7 +166,8 @@ async function main(): Promise<void> {
   const flags = slashResolution?.flags ?? parsedFlags
   const goal = positionals.join(' ').trim()
   const targetFlag = flags.get('target')
-  const targetFiles = targetFlag ? readTargetFiles(targetFlag) : []
+  const dirFlag = flags.get('dir')
+  const targetFiles = mergeTargetFiles(targetFlag ? readTargetFiles(targetFlag) : [], dirFlag ? readTargetDirectories(dirFlag) : [])
   const effectiveGoal =
     goal ||
     (targetFiles.length === 1
@@ -107,8 +176,18 @@ async function main(): Promise<void> {
         ? `基于 ${targetFiles.length} 个目标文件执行`
         : '')
 
+  if (command === 'watch') {
+    const { runWatchTui } = await import('../tui/watch.js')
+    await runWatchTui({
+      stateRoot,
+      runDirectory: flags.get('runDirectory'),
+      reportPath: flags.get('reportPath')
+    })
+    return
+  }
+
   if (!effectiveGoal && command !== 'resume') {
-    throw new Error('请提供目标，或通过 --target todo.md / --target=a.md,b.md 指定目标文件')
+    throw new Error('请提供目标，或通过 -target todo.md / -target=a.md,b.md / -dir docs 指定目标输入')
   }
 
   const roles = loadRoles(rolesConfigPath)

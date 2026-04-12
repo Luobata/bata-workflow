@@ -29,6 +29,10 @@ function buildRunDir(stateRoot: string, goal: string): string {
   return resolve(stateRoot, 'runs', runId)
 }
 
+export function getRunReportPath(runDirectory: string): string {
+  return resolve(runDirectory, 'report.json')
+}
+
 export interface StateStoreResult {
   runDirectory: string
   planPath: string
@@ -81,7 +85,7 @@ export function persistRunReport(stateRoot: string, report: RunReport, runDirect
   ensureDir(targetRunDirectory)
 
   const planPath = resolve(targetRunDirectory, 'plan.json')
-  const reportPath = resolve(targetRunDirectory, 'report.json')
+  const reportPath = getRunReportPath(targetRunDirectory)
   const latestPath = resolve(stateRoot, 'latest-run.json')
   const queuePath = getQueuePath(targetRunDirectory)
   const taskStorePath = persistTaskStore(targetRunDirectory, report)
