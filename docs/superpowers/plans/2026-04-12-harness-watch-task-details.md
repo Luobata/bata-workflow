@@ -1,6 +1,6 @@
 # Harness Watch Task Details Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 为 `watch` 终端 TUI 增加可选择的任务详情面板，支持在监控运行时快速排障。
 
@@ -29,7 +29,7 @@
 - Modify: `src/tui/watch-state.ts`
 - Test: `tests/watch-state.test.ts`
 
-- [ ] **Step 1: 写失败测试，覆盖详情字段聚合**
+- [x] **Step 1: 写失败测试，覆盖详情字段聚合**
 
 ```ts
 it('为选中的 hot task 聚合排障优先详情', () => {
@@ -46,12 +46,12 @@ it('为选中的 hot task 聚合排障优先详情', () => {
 })
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- watch-state`
 Expected: FAIL，提示 `selectedTask` 尚未实现
 
-- [ ] **Step 3: 实现 `selectedTask` 视图模型与选择保持逻辑**
+- [x] **Step 3: 实现 `selectedTask` 视图模型与选择保持逻辑**
 
 ```ts
 export type WatchSelectedTaskViewModel = {
@@ -69,7 +69,7 @@ export type WatchSelectedTaskViewModel = {
 }
 ```
 
-- [ ] **Step 4: 测试通过后补无选中兜底用例**
+- [x] **Step 4: 测试通过后补无选中兜底用例**
 
 Run: `npm test -- watch-state`
 Expected: PASS，并覆盖：
@@ -83,7 +83,7 @@ Expected: PASS，并覆盖：
 - Modify: `src/tui/render.ts`
 - Test: `tests/watch-state.test.ts`
 
-- [ ] **Step 1: 写失败测试，要求渲染出 `Task Details` 面板和选中标记**
+- [x] **Step 1: 写失败测试，要求渲染出 `Task Details` 面板和选中标记**
 
 ```ts
 it('渲染任务详情面板与选中态', () => {
@@ -94,12 +94,12 @@ it('渲染任务详情面板与选中态', () => {
 })
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- watch-state`
 Expected: FAIL，当前渲染还没有详情面板
 
-- [ ] **Step 3: 实现三栏渲染**
+- [x] **Step 3: 实现三栏渲染**
 
 ```ts
 Workers | Hot Tasks | Task Details
@@ -107,7 +107,7 @@ Workers | Hot Tasks | Task Details
 Recent Events
 ```
 
-- [ ] **Step 4: 测试通过并检查长文本截断**
+- [x] **Step 4: 测试通过并检查长文本截断**
 
 Run: `npm test -- watch-state`
 Expected: PASS，且详情字段过长时不会破坏基本布局
@@ -118,7 +118,7 @@ Expected: PASS，且详情字段过长时不会破坏基本布局
 - Modify: `src/tui/watch.ts`
 - Test: `tests/watch-command.test.ts`
 
-- [ ] **Step 1: 写失败测试，覆盖 `↑/↓/j/k` 键位解析**
+- [x] **Step 1: 写失败测试，覆盖 `↑/↓/j/k` 键位解析**
 
 ```ts
 it('支持上下移动 hot task 选择', () => {
@@ -129,19 +129,19 @@ it('支持上下移动 hot task 选择', () => {
 })
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- watch-command`
 Expected: FAIL，当前只支持 `q/r/p`
 
-- [ ] **Step 3: 实现选择状态维护**
+- [x] **Step 3: 实现选择状态维护**
 
 ```ts
 let selectedTaskId: string | null = null
 // refresh 后：若 selectedTaskId 仍在 hotTasks 中则保留，否则回落到第一条
 ```
 
-- [ ] **Step 4: 测试通过并人工确认选择刷新不丢失**
+- [x] **Step 4: 测试通过并人工确认选择刷新不丢失**
 
 Run: `npm test -- watch-command`
 Expected: PASS
@@ -152,7 +152,7 @@ Expected: PASS
 - Modify: `tests/watch-state.test.ts`
 - Modify: `tests/watch-command.test.ts`
 
-- [ ] **Step 1: 补回归测试**
+- [x] **Step 1: 补回归测试**
 
 ```ts
 it('无 hot tasks 时详情面板显示占位文本', () => {
@@ -160,12 +160,12 @@ it('无 hot tasks 时详情面板显示占位文本', () => {
 })
 ```
 
-- [ ] **Step 2: 运行局部测试**
+- [x] **Step 2: 运行局部测试**
 
 Run: `npm test -- watch-command watch-state`
 Expected: PASS
 
-- [ ] **Step 3: 运行相关回归测试与构建**
+- [x] **Step 3: 运行相关回归测试与构建**
 
 Run: `npm test -- slash-command-loader planner-dispatcher watch-command watch-state`
 Expected: PASS
@@ -173,7 +173,7 @@ Expected: PASS
 Run: `npm run build`
 Expected: PASS
 
-- [ ] **Step 4: 做一次真实链路冒烟**
+- [x] **Step 4: 做一次真实链路冒烟**
 
 Run:
 - `pnpm dev /harness-debug --adapter=dry-run -dir <docs>`
@@ -186,12 +186,12 @@ Expected:
 
 ## Self-Review Checklist
 
-- [ ] 没有引入新的运行状态源，详情仍只来自 `RunReport`
-- [ ] 选择状态只保存在当前 TUI 会话中
-- [ ] `selectedTaskId` 刷新后保持逻辑清晰且可测试
-- [ ] 无 hot task 时界面不报错
-- [ ] 三栏布局在测试输出中可读
-- [ ] `q/r/p` 不回归，新增 `↑/↓/j/k` 行为可测
+- [x] 没有引入新的运行状态源，详情仍只来自 `RunReport`
+- [x] 选择状态只保存在当前 TUI 会话中
+- [x] `selectedTaskId` 刷新后保持逻辑清晰且可测试
+- [x] 无 hot task 时界面不报错
+- [x] 三栏布局在测试输出中可读
+- [x] `q/r/p` 不回归，新增 `↑/↓/j/k` 行为可测
 
 ## Verification Commands
 

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/rush/v5/command-line.schema.json",
+  "commands": [
+    {
+      "commandKind": "bulk",
+      "name": "test",
+      "summary": "Run project test scripts",
+      "description": "Run each project's test script in dependency order.",
+      "enableParallelism": true,
+      "ignoreMissingScript": true,
+      "incremental": false
+    }
+  ],
+  "parameters": []
+}

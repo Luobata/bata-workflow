@@ -1,6 +1,6 @@
 # Harness Watch TUI Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 为 `harness` 增加一个只读实时监控型终端 TUI，通过 `watch` 命令观察 team 模式运行状态。
 
@@ -33,7 +33,7 @@
 - Modify: `src/cli/index.ts`
 - Test: `tests/watch-command.test.ts`
 
-- [ ] **Step 1: 写 `watch` 命令的失败测试**
+- [x] **Step 1: 写 `watch` 命令的失败测试**
 
 ```ts
 import { describe, expect, it } from 'vitest'
@@ -45,12 +45,12 @@ describe('watch command', () => {
 })
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- watch-command`
 Expected: FAIL，提示 `watch command` 用例失败或命令尚未实现
 
-- [ ] **Step 3: 在 CLI 中增加 `watch` 命令分支**
+- [x] **Step 3: 在 CLI 中增加 `watch` 命令分支**
 
 ```ts
 if (command === 'watch') {
@@ -64,12 +64,12 @@ if (command === 'watch') {
 }
 ```
 
-- [ ] **Step 4: 运行测试确认入口通过**
+- [x] **Step 4: 运行测试确认入口通过**
 
 Run: `npm test -- watch-command`
 Expected: PASS，命令能被识别并进入 `watch` 分支
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/cli/index.ts tests/watch-command.test.ts
@@ -83,7 +83,7 @@ git commit -m "feat: add watch command entry"
 - Modify: `src/runtime/state-store.ts`（仅在需要导出更多读取能力时）
 - Test: `tests/watch-state.test.ts`
 
-- [ ] **Step 1: 写聚合逻辑失败测试**
+- [x] **Step 1: 写聚合逻辑失败测试**
 
 ```ts
 import { describe, expect, it } from 'vitest'
@@ -95,12 +95,12 @@ describe('watch state', () => {
 })
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- watch-state`
 Expected: FAIL，提示视图模型尚未实现
 
-- [ ] **Step 3: 实现 `watch-state.ts` 的核心函数**
+- [x] **Step 3: 实现 `watch-state.ts` 的核心函数**
 
 ```ts
 export interface WatchViewModel {
@@ -120,7 +120,7 @@ export interface WatchViewModel {
 }
 ```
 
-- [ ] **Step 4: 为以下规则补齐实现并确认测试通过**
+- [x] **Step 4: 为以下规则补齐实现并确认测试通过**
 
 Run: `npm test -- watch-state`
 Expected: PASS，且覆盖以下行为：
@@ -129,7 +129,7 @@ Expected: PASS，且覆盖以下行为：
 - `workers` 中空 role/task 用 `-` 占位
 - `recentEvents` 只保留最近 N 条
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/tui/watch-state.ts tests/watch-state.test.ts src/runtime/state-store.ts
@@ -142,7 +142,7 @@ git commit -m "feat: add watch state aggregation"
 - Create: `src/tui/render.ts`
 - Test: `tests/watch-state.test.ts`
 
-- [ ] **Step 1: 写渲染快照失败测试**
+- [x] **Step 1: 写渲染快照失败测试**
 
 ```ts
 it('渲染 watch TUI 的总览、workers、tasks 与 events 四个区域', () => {
@@ -153,12 +153,12 @@ it('渲染 watch TUI 的总览、workers、tasks 与 events 四个区域', () =>
 })
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- watch-state`
 Expected: FAIL，提示 `renderWatchScreen` 未实现或输出不匹配
 
-- [ ] **Step 3: 实现字符串渲染器**
+- [x] **Step 3: 实现字符串渲染器**
 
 ```ts
 export function renderWatchScreen(view: WatchViewModel): string {
@@ -174,12 +174,12 @@ export function renderWatchScreen(view: WatchViewModel): string {
 }
 ```
 
-- [ ] **Step 4: 运行测试确认渲染输出稳定**
+- [x] **Step 4: 运行测试确认渲染输出稳定**
 
 Run: `npm test -- watch-state`
 Expected: PASS，渲染输出包含四个区块与快捷键提示
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/tui/render.ts tests/watch-state.test.ts
@@ -193,7 +193,7 @@ git commit -m "feat: render watch tui screen"
 - Modify: `src/cli/index.ts`
 - Test: `tests/watch-command.test.ts`
 
-- [ ] **Step 1: 写 watch 主循环失败测试**
+- [x] **Step 1: 写 watch 主循环失败测试**
 
 ```ts
 it('watch 模式支持 q 退出、r 刷新、p 暂停刷新', () => {
@@ -201,12 +201,12 @@ it('watch 模式支持 q 退出、r 刷新、p 暂停刷新', () => {
 })
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- watch-command`
 Expected: FAIL，提示 watch 交互尚未实现
 
-- [ ] **Step 3: 实现最小交互循环**
+- [x] **Step 3: 实现最小交互循环**
 
 ```ts
 export async function runWatchTui(params: { stateRoot: string; runDirectory?: string; reportPath?: string }) {
@@ -221,12 +221,12 @@ export async function runWatchTui(params: { stateRoot: string; runDirectory?: st
 }
 ```
 
-- [ ] **Step 4: 验证命令可用与退出恢复正常**
+- [x] **Step 4: 验证命令可用与退出恢复正常**
 
 Run: `npm test -- watch-command`
 Expected: PASS，且人工执行 `pnpm dev watch` 后能正常退出并恢复终端输入状态
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/tui/watch.ts src/cli/index.ts tests/watch-command.test.ts
@@ -240,7 +240,7 @@ git commit -m "feat: add interactive watch tui"
 - Modify: `tests/watch-command.test.ts`
 - Modify: `tests/watch-state.test.ts`
 
-- [ ] **Step 1: 增加异常路径测试**
+- [x] **Step 1: 增加异常路径测试**
 
 ```ts
 it('没有 latest run 时输出明确提示', () => {
@@ -252,12 +252,12 @@ it('reportPath 或 runDirectory 非法时输出明确错误', () => {
 })
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- watch-command watch-state`
 Expected: FAIL，提示异常路径尚未处理
 
-- [ ] **Step 3: 实现异常提示与兜底逻辑**
+- [x] **Step 3: 实现异常提示与兜底逻辑**
 
 ```ts
 if (!latestRun && !params.runDirectory && !params.reportPath) {
@@ -265,7 +265,7 @@ if (!latestRun && !params.runDirectory && !params.reportPath) {
 }
 ```
 
-- [ ] **Step 4: 运行完整验证**
+- [x] **Step 4: 运行完整验证**
 
 Run: `npm test -- slash-command-loader planner-dispatcher watch-command watch-state`
 Expected: PASS
@@ -278,7 +278,7 @@ Expected: PASS
 - 再执行 `pnpm dev watch`
 - 期望看到总览 / Workers / Hot Tasks / Recent Events，并可通过 `q` 退出
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/tui/watch.ts tests/watch-command.test.ts tests/watch-state.test.ts
@@ -287,12 +287,12 @@ git commit -m "test: cover watch tui error states"
 
 ## Self-Review Checklist
 
-- [ ] `watch` 命令没有修改现有 `run/plan/resume` 语义
-- [ ] 数据只来自现有状态文件，没有引入第二套 runtime 状态源
-- [ ] 第一版只读，不含控制操作
-- [ ] `q/r/p` 行为有测试或人工验证
-- [ ] 输出的 Workers / Hot Tasks / Recent Events 字段都能映射回现有 `RunReport.runtime`
-- [ ] 没有 latest run 的报错清晰可懂
+- [x] `watch` 命令没有修改现有 `run/plan/resume` 语义
+- [x] 数据只来自现有状态文件，没有引入第二套 runtime 状态源
+- [x] 第一版只读，不含控制操作
+- [x] `q/r/p` 行为有测试或人工验证
+- [x] 输出的 Workers / Hot Tasks / Recent Events 字段都能映射回现有 `RunReport.runtime`
+- [x] 没有 latest run 的报错清晰可懂
 
 ## Verification Commands
 

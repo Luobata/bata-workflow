@@ -1,6 +1,6 @@
 # Harness Watch Collaboration Panel Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 为 `watch` 的 `Task Details` 面板补充协作链路信息，优先展示 mailbox、上游任务摘要与 handoff 线索，同时保留后续切到方案 B（详情 Tab 切换）的扩展空间。
 
@@ -29,7 +29,7 @@
 - Modify: `src/tui/watch-state.ts`
 - Test: `tests/watch-state.test.ts`
 
-- [ ] **Step 1: 写失败测试，覆盖 mailbox、upstream、handoff 聚合**
+- [x] **Step 1: 写失败测试，覆盖 mailbox、upstream、handoff 聚合**
 
 ```ts
 it('为 selectedTask 聚合协作链路信息', () => {
@@ -46,12 +46,12 @@ it('为 selectedTask 聚合协作链路信息', () => {
 })
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- watch-state`
 Expected: FAIL，提示 `collaboration` 字段尚未实现
 
-- [ ] **Step 3: 扩展 `WatchSelectedTaskViewModel`**
+- [x] **Step 3: 扩展 `WatchSelectedTaskViewModel`**
 
 ```ts
 export type WatchTaskCollaborationViewModel = {
@@ -79,7 +79,7 @@ export type WatchTaskCollaborationViewModel = {
 }
 ```
 
-- [ ] **Step 4: 实现聚合逻辑，要求结构可支持未来详情 Tab**
+- [x] **Step 4: 实现聚合逻辑，要求结构可支持未来详情 Tab**
 
 ```ts
 selectedTask: {
@@ -93,7 +93,7 @@ selectedTask: {
 }
 ```
 
-- [ ] **Step 5: 运行测试确认通过**
+- [x] **Step 5: 运行测试确认通过**
 
 Run: `npm test -- watch-state`
 Expected: PASS，且覆盖：
@@ -107,7 +107,7 @@ Expected: PASS，且覆盖：
 - Modify: `src/tui/render.ts`
 - Test: `tests/watch-state.test.ts`
 
-- [ ] **Step 1: 写失败测试，要求渲染 Collaboration 区块**
+- [x] **Step 1: 写失败测试，要求渲染 Collaboration 区块**
 
 ```ts
 it('在任务详情中渲染协作链路区块', () => {
@@ -119,12 +119,12 @@ it('在任务详情中渲染协作链路区块', () => {
 })
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- watch-state`
 Expected: FAIL，当前详情面板尚未渲染协作链路
 
-- [ ] **Step 3: 以内联区块方式追加渲染，但保留未来 tab 化边界**
+- [x] **Step 3: 以内联区块方式追加渲染，但保留未来 tab 化边界**
 
 ```ts
 function renderTaskOverview(task: WatchSelectedTaskViewModel): string[] { ... }
@@ -139,7 +139,7 @@ function renderTaskDetails(view: WatchViewModel): string[] {
 }
 ```
 
-- [ ] **Step 4: 做基础截断与空值占位**
+- [x] **Step 4: 做基础截断与空值占位**
 
 Run: `npm test -- watch-state`
 Expected: PASS，且无 mailbox / upstream 时显示占位文本，例如 `No mailbox activity`
@@ -150,7 +150,7 @@ Expected: PASS，且无 mailbox / upstream 时显示占位文本，例如 `No ma
 - Modify: `src/tui/watch.ts`
 - Test: `tests/watch-command.test.ts`
 
-- [ ] **Step 1: 写失败测试，要求详情视图状态可扩展但默认仍是 overview+collaboration 合并显示**
+- [x] **Step 1: 写失败测试，要求详情视图状态可扩展但默认仍是 overview+collaboration 合并显示**
 
 ```ts
 it('watch ui state 保留详情视图模式扩展位', () => {
@@ -158,12 +158,12 @@ it('watch ui state 保留详情视图模式扩展位', () => {
 })
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- watch-command`
 Expected: FAIL，当前无 `detailMode` 概念
 
-- [ ] **Step 3: 仅增加轻量状态占位，不实现 tab 切换**
+- [x] **Step 3: 仅增加轻量状态占位，不实现 tab 切换**
 
 ```ts
 export type WatchDetailMode = 'combined' | 'overview' | 'collaboration'
@@ -176,7 +176,7 @@ export type WatchUiState = {
 }
 ```
 
-- [ ] **Step 4: 确认现有交互不回归**
+- [x] **Step 4: 确认现有交互不回归**
 
 Run: `npm test -- watch-command`
 Expected: PASS，`q/r/p/↑/↓/j/k` 均不受影响
@@ -187,7 +187,7 @@ Expected: PASS，`q/r/p/↑/↓/j/k` 均不受影响
 - Modify: `tests/watch-state.test.ts`
 - Modify: `tests/watch-command.test.ts`
 
-- [ ] **Step 1: 补协作场景测试数据**
+- [x] **Step 1: 补协作场景测试数据**
 
 ```ts
 runtime.mailbox = [
@@ -202,12 +202,12 @@ runtime.mailbox = [
 ]
 ```
 
-- [ ] **Step 2: 运行局部测试**
+- [x] **Step 2: 运行局部测试**
 
 Run: `npm test -- watch-command watch-state`
 Expected: PASS
 
-- [ ] **Step 3: 运行相关回归测试与构建**
+- [x] **Step 3: 运行相关回归测试与构建**
 
 Run: `npm test -- slash-command-loader planner-dispatcher watch-command watch-state`
 Expected: PASS
@@ -215,7 +215,7 @@ Expected: PASS
 Run: `npm run build`
 Expected: PASS
 
-- [ ] **Step 4: 做真实链路冒烟**
+- [x] **Step 4: 做真实链路冒烟**
 
 Run:
 - `pnpm dev /harness-debug --adapter=dry-run -dir <docs>`
@@ -228,12 +228,12 @@ Expected:
 
 ## Self-Review Checklist
 
-- [ ] 协作链路数据全部来自现有 `RunReport.runtime.mailbox`、`results`、`plan.tasks`、`taskStates`
-- [ ] `WatchSelectedTaskViewModel` 新增的是独立 `collaboration` 子结构，而不是把字段平铺到顶层
-- [ ] 当前渲染是方案 A（内联追加区块），但结构支持未来方案 B 切 Tab
-- [ ] 没有引入新的运行控制行为
-- [ ] 没有破坏现有 `Task Details` 基础排障字段
-- [ ] 测试覆盖 mailbox、upstream、handoff、空值兜底与交互不回归
+- [x] 协作链路数据全部来自现有 `RunReport.runtime.mailbox`、`results`、`plan.tasks`、`taskStates`
+- [x] `WatchSelectedTaskViewModel` 新增的是独立 `collaboration` 子结构，而不是把字段平铺到顶层
+- [x] 当前渲染是方案 A（内联追加区块），但结构支持未来方案 B 切 Tab
+- [x] 没有引入新的运行控制行为
+- [x] 没有破坏现有 `Task Details` 基础排障字段
+- [x] 测试覆盖 mailbox、upstream、handoff、空值兜底与交互不回归
 
 ## Verification Commands
 

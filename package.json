@@ -1,24 +1,11 @@
 {
-  "name": "harness",
-  "version": "0.1.0",
+  "name": "harness-monorepo",
   "private": true,
-  "type": "module",
+  "packageManager": "pnpm@9.15.9",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "test": "vitest run",
-    "dev": "tsx src/cli/index.ts",
-    "plan": "tsx src/cli/index.ts plan",
-    "orchestrate": "tsx src/cli/index.ts run",
-    "resume": "tsx src/cli/index.ts resume"
-  },
-  "dependencies": {
-    "yaml": "^2.8.1",
-    "zod": "^3.25.76"
-  },
-  "devDependencies": {
-    "@types/node": "^22.15.30",
-    "tsx": "^4.20.6",
-    "typescript": "^5.9.3",
-    "vitest": "^3.2.4"
+    "build": "npx -y @microsoft/rush@5.175.0 build",
+    "test": "npx -y @microsoft/rush@5.175.0 test",
+    "update": "npx -y @microsoft/rush@5.175.0 update",
+    "install:repo": "npx -y @microsoft/rush@5.175.0 install"
   }
 }
