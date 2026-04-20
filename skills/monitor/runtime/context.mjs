@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { existsSync, mkdirSync, realpathSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const DEFAULT_REQUESTER_ACTOR_ID = 'lead'
 const DEFAULT_BOARD_HOST = '127.0.0.1'
@@ -34,20 +35,28 @@ const resolveBoardPort = (value) => {
   return DEFAULT_BOARD_PORT
 }
 
-const findBoardRepoRoot = (cwd) => {
-  let current = cwd
+const findBoardRepoRoot = (startPath) => {
+  let current = resolve(startPath)
 
   while (true) {
     if (existsSync(resolve(current, 'apps', 'monitor-board', 'package.json'))) {
       return current
     }
 
-    const parent = resolve(current, '..')
+    const parent = dirname(current)
     if (parent === current) {
       return null
     }
 
     current = parent
+  }
+}
+
+const findBoardRepoRootFromSkillSource = () => {
+  try {
+    return findBoardRepoRoot(dirname(realpathSync(fileURLToPath(import.meta.url))))
+  } catch {
+    return null
   }
 }
 
@@ -59,7 +68,7 @@ export function resolveMonitorContext(options = {}) {
   const cwd = resolve(options.cwd ?? process.cwd())
   const homeDir = resolve(options.homeDir ?? process.env.HOME ?? process.env.USERPROFILE ?? cwd)
   const stateRoot = resolve(cwd, '.harness', 'state', 'monitor-sessions')
-  const boardRepoRoot = findBoardRepoRoot(cwd)
+  const boardRepoRoot = findBoardRepoRoot(cwd) ?? findBoardRepoRootFromSkillSource()
   const boardHost = options.boardHost ?? DEFAULT_BOARD_HOST
   const boardPort = resolveBoardPort(options.boardPort)
   const boardRuntimeStatePath = boardRepoRoot

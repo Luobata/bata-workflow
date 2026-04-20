@@ -21,6 +21,36 @@ afterEach(() => {
 })
 
 describe('monitor skill runtime', () => {
+  it('resolves the board repo root from the linked skill source when cwd is outside the harness repo', async () => {
+    const homeDir = createTempRoot()
+    const cwd = createTempRoot()
+    const ensureBoardRunning = vi.fn(async () => ({
+      status: 'failed',
+      url: null,
+      port: 5173,
+      pid: null,
+      message: 'board not started in test',
+    }))
+
+    await invokeMonitor({
+      cwd,
+      homeDir,
+      rootSessionId: 'default',
+      requesterActorId: 'lead',
+      isRootActor: true,
+      ensureBoardRunning,
+    })
+
+    expect(ensureBoardRunning).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repoRoot: resolve(import.meta.dirname, '..', '..', '..'),
+        runtimeStatePath: resolve(import.meta.dirname, '..', '..', '..', '.harness', 'state', 'monitor-board', 'runtime.json'),
+        host: '127.0.0.1',
+        preferredPort: 5173,
+      }),
+    )
+  })
+
   it('creates a monitor session on first invocation and persists state', async () => {
     const homeDir = createTempRoot()
     const cwd = createTempRoot()
