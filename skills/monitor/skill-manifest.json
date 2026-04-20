@@ -1,16 +1,16 @@
 {
   "name": "monitor",
   "displayName": "Monitor",
-  "entry": "src/index.ts",
-  "cocoInstallName": "@luobata/monitor",
+  "entry": "SKILL.md",
+  "cocoInstallName": "monitor",
   "version": "0.1.0",
-  "files": ["skill-manifest.json", "src/**/*.ts"],
+  "files": ["skill-manifest.json", "SKILL.md", "runtime/**/*.mjs", "src/**/*.ts"],
   "dev": {
     "link": true,
     "publishLocal": true
   },
   "metadata": {
-    "description": "Local-first monitor skill seed for harness development",
-    "tags": ["monitor", "skill", "local-dev", "template"]
+    "description": "Create or attach a monitor session from Coco using a portable local runtime",
+    "tags": ["monitor", "coco", "local-dev", "session"]
   }
 }

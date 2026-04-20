@@ -8,6 +8,9 @@ export interface OpenMonitorSessionInput {
 export interface OpenMonitorSessionResult {
   kind: 'create' | 'attach'
   monitorSessionId: string
+  rootSessionId: string
+  requesterActorId: string
+  isRootActor: boolean
   message: string
 }
 
@@ -20,6 +23,9 @@ export const openMonitorSession = (input: OpenMonitorSessionInput): OpenMonitorS
     return {
       kind: 'attach',
       monitorSessionId,
+      rootSessionId: input.rootSessionId,
+      requesterActorId: input.requesterActorId,
+      isRootActor: input.isRootActor,
       message: `Attached actor ${input.requesterActorId} to existing monitor ${monitorSessionId}`,
     }
   }
@@ -28,6 +34,9 @@ export const openMonitorSession = (input: OpenMonitorSessionInput): OpenMonitorS
     return {
       kind: 'attach',
       monitorSessionId,
+      rootSessionId: input.rootSessionId,
+      requesterActorId: input.requesterActorId,
+      isRootActor: input.isRootActor,
       message: `Child actor ${input.requesterActorId} cannot create a nested monitor; attach to ${monitorSessionId}`,
     }
   }
@@ -35,6 +44,9 @@ export const openMonitorSession = (input: OpenMonitorSessionInput): OpenMonitorS
   return {
     kind: 'create',
     monitorSessionId,
+    rootSessionId: input.rootSessionId,
+    requesterActorId: input.requesterActorId,
+    isRootActor: input.isRootActor,
     message: `Created monitor ${monitorSessionId} for root actor ${input.requesterActorId}`,
   }
 }

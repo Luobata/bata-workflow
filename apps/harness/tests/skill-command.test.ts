@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { lstatSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, lstatSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -24,6 +24,22 @@ function runSkillCli(args: string[], homeDirectory: string) {
       USERPROFILE: homeDirectory,
     },
   })
+}
+
+function runInstalledMonitor(installPath: string, workspacePath: string, homeDirectory: string) {
+  return spawnSync(
+    process.execPath,
+    [resolve(installPath, 'runtime', 'invoke-monitor.mjs'), '--cwd', workspacePath, '--output', 'json'],
+    {
+      cwd: appRoot,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        HOME: homeDirectory,
+        USERPROFILE: homeDirectory,
+      },
+    },
+  )
 }
 
 function createHandlers() {
@@ -133,10 +149,10 @@ describe('skill command', () => {
 
   it('seeded monitor skill supports validate link status doctor and publish-local lifecycle', () => {
     const tempHome = mkdtempSync(join(tmpdir(), 'harness-skill-home-'))
-    const encodedInstallName = encodeURIComponent('@luobata/monitor')
-    const installPath = resolve(tempHome, '.coco', 'skills', encodedInstallName)
-    const statePath = resolve(skillStateRoot, `${encodedInstallName}.json`)
-    const packOutputDirectory = resolve(skillPacksRoot, encodedInstallName, '0.1.0')
+    const installName = 'monitor'
+    const installPath = resolve(tempHome, '.coco', 'skills', installName)
+    const statePath = resolve(skillStateRoot, `${installName}.json`)
+    const packOutputDirectory = resolve(skillPacksRoot, installName, '0.1.0')
     const cleanup = () => {
       rmSync(installPath, { recursive: true, force: true })
       rmSync(statePath, { recursive: true, force: true })
@@ -149,15 +165,32 @@ describe('skill command', () => {
     try {
       const validateResult = runSkillCli(['validate', 'monitor'], tempHome)
       expect(validateResult.status).toBe(0)
-      expect(validateResult.stdout).toContain('Validated skill: @luobata/monitor@0.1.0')
+      expect(validateResult.stdout).toContain('Validated skill: monitor@0.1.0')
       expect(validateResult.stdout).toContain(`Skill Root: ${resolve(repoRoot, 'skills', 'monitor')}`)
 
       const linkResult = runSkillCli(['link', 'monitor'], tempHome)
       expect(linkResult.status).toBe(0)
       expect(linkResult.stdout).toContain(`Install Path: ${installPath}`)
       expect(lstatSync(installPath).isSymbolicLink()).toBe(true)
+      expect(existsSync(resolve(installPath, 'SKILL.md'))).toBe(true)
+      expect(existsSync(resolve(installPath, 'runtime', 'invoke-monitor.mjs'))).toBe(true)
+      const linkedRuntimeResult = spawnSync(process.execPath, [resolve(installPath, 'runtime', 'invoke-monitor.mjs')], {
+        cwd: tempHome,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          HOME: tempHome,
+          USERPROFILE: tempHome,
+        },
+      })
+      expect(linkedRuntimeResult.status).toBe(0)
+      expect(JSON.parse(linkedRuntimeResult.stdout)).toMatchObject({
+        kind: 'create',
+        requesterActorId: 'lead',
+        isRootActor: true,
+      })
       expect(JSON.parse(readFileSync(statePath, 'utf8'))).toMatchObject({
-        cocoInstallName: '@luobata/monitor',
+        cocoInstallName: 'monitor',
         mode: 'linked',
       })
 
@@ -168,13 +201,15 @@ describe('skill command', () => {
 
       const linkedDoctorResult = runSkillCli(['doctor', 'monitor'], tempHome)
       expect(linkedDoctorResult.status).toBe(0)
-      expect(linkedDoctorResult.stdout).toContain('Summary: @luobata/monitor is healthy')
+      expect(linkedDoctorResult.stdout).toContain('Summary: monitor is healthy')
 
       const publishResult = runSkillCli(['publish-local', 'monitor'], tempHome)
       expect(publishResult.status).toBe(0)
       expect(lstatSync(installPath).isDirectory()).toBe(true)
+      expect(existsSync(resolve(installPath, 'SKILL.md'))).toBe(true)
+      expect(existsSync(resolve(installPath, 'runtime', 'invoke-monitor.mjs'))).toBe(true)
       expect(JSON.parse(readFileSync(statePath, 'utf8'))).toMatchObject({
-        cocoInstallName: '@luobata/monitor',
+        cocoInstallName: 'monitor',
         mode: 'published-local',
         packPath: installPath,
       })
@@ -186,8 +221,68 @@ describe('skill command', () => {
 
       const publishedDoctorResult = runSkillCli(['doctor', 'monitor'], tempHome)
       expect(publishedDoctorResult.status).toBe(0)
-      expect(publishedDoctorResult.stdout).toContain('Summary: @luobata/monitor is healthy')
+      expect(publishedDoctorResult.stdout).toContain('Summary: monitor is healthy')
       expect(publishedDoctorResult.stdout).toContain(`State Path: ${statePath}`)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('monitor runtime keeps the same session across linked and published-local installs', () => {
+    const tempHome = mkdtempSync(join(tmpdir(), 'harness-skill-home-'))
+    const workspacePath = mkdtempSync(join(tmpdir(), 'harness-monitor-workspace-'))
+    const installName = 'monitor'
+    const installPath = resolve(tempHome, '.coco', 'skills', installName)
+    const statePath = resolve(skillStateRoot, `${installName}.json`)
+    const packOutputDirectory = resolve(skillPacksRoot, installName, '0.1.0')
+    const cleanup = () => {
+      rmSync(installPath, { recursive: true, force: true })
+      rmSync(statePath, { recursive: true, force: true })
+      rmSync(packOutputDirectory, { recursive: true, force: true })
+      rmSync(workspacePath, { recursive: true, force: true })
+      rmSync(tempHome, { recursive: true, force: true })
+    }
+
+    cleanup()
+
+    try {
+      const linkResult = runSkillCli(['link', 'monitor'], tempHome)
+      expect(linkResult.status).toBe(0)
+
+      const linkedFirst = runInstalledMonitor(installPath, workspacePath, tempHome)
+      const linkedSecond = runInstalledMonitor(installPath, workspacePath, tempHome)
+
+      expect(linkedFirst.status).toBe(0)
+      expect(linkedSecond.status).toBe(0)
+
+      const linkedFirstJson = JSON.parse(linkedFirst.stdout) as { kind: string; monitorSessionId: string }
+      const linkedSecondJson = JSON.parse(linkedSecond.stdout) as { kind: string; monitorSessionId: string }
+
+      expect(linkedFirstJson.kind).toBe('create')
+      expect(linkedSecondJson.kind).toBe('attach')
+      expect(linkedSecondJson.monitorSessionId).toBe(linkedFirstJson.monitorSessionId)
+
+      const publishResult = runSkillCli(['publish-local', 'monitor'], tempHome)
+      expect(publishResult.status).toBe(0)
+      expect(lstatSync(installPath).isDirectory()).toBe(true)
+
+      const publishedFirst = runInstalledMonitor(installPath, workspacePath, tempHome)
+      const publishedSecond = runInstalledMonitor(installPath, workspacePath, tempHome)
+
+      expect(publishedFirst.status).toBe(0)
+      expect(publishedSecond.status).toBe(0)
+
+      const publishedFirstJson = JSON.parse(publishedFirst.stdout) as { kind: string; monitorSessionId: string }
+      const publishedSecondJson = JSON.parse(publishedSecond.stdout) as { kind: string; monitorSessionId: string }
+
+      expect(publishedFirstJson).toMatchObject({
+        kind: 'attach',
+        monitorSessionId: linkedFirstJson.monitorSessionId,
+      })
+      expect(publishedSecondJson).toMatchObject({
+        kind: 'attach',
+        monitorSessionId: linkedFirstJson.monitorSessionId,
+      })
     } finally {
       cleanup()
     }
