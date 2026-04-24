@@ -2,6 +2,7 @@
 
 import { fileURLToPath } from 'node:url'
 import { realpathSync } from 'node:fs'
+import { readdir, readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
 import { ensureMonitorBoardRunning as defaultEnsureBoardRunning } from './board-launcher.mjs'
@@ -17,6 +18,81 @@ const appendLegacyInstallWarning = (message, context) => {
   return `${message} (legacy install @luobata/monitor detected; relink to monitor when convenient)`
 }
 
+const DEFAULT_COCO_SESSIONS_ENV = 'COCO_SESSIONS_ROOT'
+
+const hasExplicitRootSessionId = (options) => typeof options?.rootSessionId === 'string' && options.rootSessionId.trim().length > 0
+
+const readJsonFile = async (filePath) => {
+  try {
+    return JSON.parse(await readFile(filePath, 'utf8'))
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+      return null
+    }
+
+    if (error instanceof SyntaxError) {
+      return null
+    }
+
+    throw error
+  }
+}
+
+const resolveCocoSessionsRoot = (context) => {
+  const configuredRoot = process.env[DEFAULT_COCO_SESSIONS_ENV]?.trim()
+  if (configuredRoot) {
+    return resolve(configuredRoot)
+  }
+
+  return process.platform === 'darwin'
+    ? resolve(context.homeDir, 'Library', 'Caches', 'coco', 'sessions')
+    : resolve(context.homeDir, '.cache', 'coco', 'sessions')
+}
+
+const inferLatestCocoSessionId = async (context) => {
+  const cocoSessionsRoot = resolveCocoSessionsRoot(context)
+
+  try {
+    const entries = await readdir(cocoSessionsRoot, { withFileTypes: true })
+    const workspaceRoot = resolve(context.cwd)
+    const candidates = (
+      await Promise.all(
+        entries
+          .filter((entry) => entry.isDirectory())
+          .map(async (entry) => {
+            const session = await readJsonFile(resolve(cocoSessionsRoot, entry.name, 'session.json'))
+            const sessionWorkspaceRoot = typeof session?.metadata?.cwd === 'string' ? resolve(session.metadata.cwd) : null
+            if (sessionWorkspaceRoot !== workspaceRoot) {
+              return null
+            }
+
+            const updatedAtMs = Date.parse(session.updated_at ?? session.created_at ?? '')
+            if (Number.isNaN(updatedAtMs)) {
+              return null
+            }
+
+            return {
+              id: typeof session.id === 'string' && session.id.length > 0 ? session.id : entry.name,
+              updatedAtMs,
+            }
+          }),
+      )
+    ).filter((candidate) => candidate !== null)
+
+    if (candidates.length === 0) {
+      return null
+    }
+
+    return candidates.sort((left, right) => right.updatedAtMs - left.updatedAtMs)[0].id
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+      return null
+    }
+
+    throw error
+  }
+}
+
 const resolveOwnerActorId = ({ context, existingSession, result }) => {
   if (existingSession?.ownerActorId) {
     return existingSession.ownerActorId
@@ -30,9 +106,17 @@ const resolveOwnerActorId = ({ context, existingSession, result }) => {
 }
 
 export async function invokeMonitor(options = {}) {
-  const context = resolveMonitorContext(options)
+  const provisionalContext = resolveMonitorContext(options)
   const ensureBoardRunning = options.ensureBoardRunning ?? defaultEnsureBoardRunning
+  const explicitCocoSessionId = process.env.COCO_SESSION_ID?.trim() || null
+  const inferredRootSessionId = explicitCocoSessionId || hasExplicitRootSessionId(options)
+    ? null
+    : await inferLatestCocoSessionId(provisionalContext)
+  const context = inferredRootSessionId
+    ? resolveMonitorContext({ ...options, rootSessionId: inferredRootSessionId })
+    : provisionalContext
   const existingSession = await readMonitorSessionState(context.stateFilePath)
+  const cocoSessionId = explicitCocoSessionId ?? existingSession?.cocoSessionId ?? inferredRootSessionId ?? null
   const result = openMonitorSession({
     rootSessionId: context.rootSessionId,
     requesterActorId: context.requesterActorId,
@@ -48,6 +132,8 @@ export async function invokeMonitor(options = {}) {
     status: 'active',
     createdAt: existingSession?.createdAt ?? now,
     updatedAt: now,
+    workspaceRoot: context.cwd,
+    cocoSessionId,
   }
 
   await writeMonitorSessionState(context.stateFilePath, persistedSession)
@@ -56,8 +142,10 @@ export async function invokeMonitor(options = {}) {
   try {
     board = await ensureBoardRunning({
       repoRoot: context.boardRepoRoot,
+      stateRoot: context.harnessStateRoot,
       runtimeStatePath: context.boardRuntimeStatePath,
       monitorSessionId: result.monitorSessionId,
+      rootSessionId: result.rootSessionId,
       host: context.boardHost,
       preferredPort: context.boardPort,
     })

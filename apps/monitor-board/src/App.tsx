@@ -6,7 +6,7 @@ import { FocusDrawer, type FocusDrawerViewModel } from './components/FocusDrawer
 import { RunTree, type RunTreeNode } from './components/RunTree';
 import { TimelinePanel, type TimelineEntry } from './components/TimelinePanel';
 import { TopBar } from './components/TopBar';
-import type { BoardMode } from './store/useBoardStore';
+import type { BoardMode, BoardPanelTab } from './store/useBoardStore';
 import './styles/pixel-theme.css';
 
 type SessionActor = SessionSnapshot['state']['actors'][number];
@@ -26,12 +26,41 @@ interface AdaptedActorViewModel {
   tokenCount: number;
   elapsedLabel: string;
   updatedAt: string;
+  progressPercent: number;
+  progressStage: string;
+}
+
+interface OverallProgressViewModel {
+  label: string;
+  detail: string;
+  percent: number;
+  stage: string;
+}
+
+interface ProgressBoardRowViewModel {
+  id: string;
+  name: string;
+  role: string;
+  status: string;
+  stage: string;
+  progressPercent: number;
+  detail: string;
+}
+
+interface FocusTargetViewModel {
+  name: string;
+  role: string;
+  status: string;
+  stage: string;
+  progressPercent: number;
+  currentAction: string;
 }
 
 interface AppProps {
   initialSnapshot?: SessionSnapshot;
   socketUrl?: string;
   connectSocket?: BoardSocketConnector;
+  targetMonitorSessionId?: string | null;
 }
 
 type BoardSocketConnection = Pick<WebSocket, 'close'>;
@@ -57,11 +86,14 @@ const connectBoardSocket: BoardSocketConnector = (url, onMessage) => {
   return socket;
 };
 
-const buildFallbackSnapshot = (monitorSessionId: string): SessionSnapshot => ({
+const cloneDemoSnapshotForMonitor = (monitorSessionId: string): SessionSnapshot => ({
   ...demoSnapshot,
   monitorSessionId,
   state: {
-    ...demoSnapshot.state,
+    actors: demoSnapshot.state.actors.map((actor) => ({
+      ...actor,
+      children: [...actor.children],
+    })),
     timeline: demoSnapshot.state.timeline.map((event) => ({
       ...event,
       monitorSessionId,
@@ -69,14 +101,110 @@ const buildFallbackSnapshot = (monitorSessionId: string): SessionSnapshot => ({
   },
 });
 
-const resolveDemoSnapshot = () => {
-  if (typeof window === 'undefined') {
-    return demoSnapshot;
+const createDemoSnapshot = (monitorSessionId = demoSnapshot.monitorSessionId): SessionSnapshot =>
+  monitorSessionId === demoSnapshot.monitorSessionId ? demoSnapshot : cloneDemoSnapshotForMonitor(monitorSessionId);
+
+const createLiveShellSnapshot = (monitorSessionId: string): SessionSnapshot => {
+  const rootSessionId = monitorSessionId.startsWith('monitor:') ? monitorSessionId.slice('monitor:'.length) : monitorSessionId;
+  const leadActorId = `lead:${rootSessionId}`;
+  const timestamp = '1970-01-01T00:00:00.000Z';
+
+  return {
+    monitorSessionId,
+    stats: {
+      actorCount: 1,
+      activeCount: 1,
+      blockedCount: 0,
+      totalTokens: 0,
+      elapsedMs: 0,
+    },
+    actorCount: 1,
+    timelineCount: 1,
+    state: {
+      actors: [
+        {
+          id: leadActorId,
+          parentActorId: null,
+          actorType: 'lead',
+          status: 'active',
+          summary: 'live shell awaiting runtime data',
+          model: null,
+          toolName: null,
+          totalTokens: 0,
+          elapsedMs: 0,
+          children: [],
+          lastEventAt: timestamp,
+          lastEventSequence: 1,
+        },
+      ],
+      timeline: [
+        {
+          id: `runtime:shell:${rootSessionId}`,
+          sessionId: rootSessionId,
+          rootSessionId,
+          monitorSessionId,
+          actorId: leadActorId,
+          parentActorId: null,
+          actorType: 'lead',
+          eventType: 'session.started',
+          action: 'awaiting runtime data',
+          status: 'active',
+          timestamp,
+          sequence: 1,
+          model: null,
+          toolName: null,
+          tokenIn: 0,
+          tokenOut: 0,
+          elapsedMs: 0,
+          costEstimate: 0,
+          summary: 'awaiting runtime data',
+          metadata: {
+            displayName: 'Lead Agent',
+            currentAction: 'awaiting runtime data',
+            timelineLabel: 'awaiting runtime data',
+          },
+          tags: ['harness-runtime', 'session-shell'],
+          severity: 'info',
+          monitorEnabled: true,
+          monitorInherited: false,
+          monitorOwnerActorId: leadActorId,
+        },
+      ],
+    },
+  };
+};
+
+const createPendingShellSnapshot = (): SessionSnapshot => createLiveShellSnapshot('monitor:pending');
+
+export const resolveAppBootstrapFromLocation = (
+  search: string,
+): Pick<AppProps, 'initialSnapshot' | 'targetMonitorSessionId' | 'socketUrl'> => {
+  const params = new URLSearchParams(search);
+  const targetMonitorSessionId = params.get('monitorSessionId')?.trim();
+  const socketUrl = params.get('socketUrl')?.trim();
+
+  if (targetMonitorSessionId) {
+    return {
+      targetMonitorSessionId,
+      ...(socketUrl ? { socketUrl } : {}),
+    };
   }
 
-  const monitorSessionId = new URLSearchParams(window.location.search).get('monitorSessionId')?.trim();
-  return monitorSessionId ? buildFallbackSnapshot(monitorSessionId) : demoSnapshot;
+  const demoSeed = params.get('seed')?.trim();
+
+  if (demoSeed) {
+    return {
+      initialSnapshot: createDemoSnapshot(demoSeed),
+    };
+  }
+
+  return {};
 };
+
+const resolveInitialSnapshot = (
+  initialSnapshot: SessionSnapshot | undefined,
+  targetMonitorSessionId: string | null | undefined,
+): SessionSnapshot => (targetMonitorSessionId ? createLiveShellSnapshot(targetMonitorSessionId) : (initialSnapshot ?? createPendingShellSnapshot()));
 
 const demoSnapshot: SessionSnapshot = {
   monitorSessionId: 'Task 8 Board',
@@ -289,6 +417,44 @@ const formatClockTime = (value: string) => {
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;
 
+const clampPercent = (value: number) => Math.max(0, Math.min(100, Math.round(value)));
+
+const getProgressStage = (progressPercent: number) => {
+  if (progressPercent >= 95) {
+    return 'Completed';
+  }
+
+  if (progressPercent >= 75) {
+    return 'Wrapping';
+  }
+
+  if (progressPercent >= 45) {
+    return 'Execution';
+  }
+
+  if (progressPercent >= 20) {
+    return 'Scouting';
+  }
+
+  return 'Booting';
+};
+
+const statusProgressBase: Record<ActorStatus, number> = {
+  active: 52,
+  blocked: 48,
+  canceled: 12,
+  disconnected: 52,
+  failed: 18,
+  idle: 22,
+  done: 92,
+};
+
+const operationsDeckTabs: Array<{ id: BoardPanelTab; label: string }> = [
+  { id: 'timeline', label: 'Timeline' },
+  { id: 'runTree', label: 'Run Tree' },
+  { id: 'progress', label: 'Progress Board' },
+];
+
 const readStringFromMetadata = (metadata: Record<string, unknown>, keys: string[]) => {
   for (const key of keys) {
     const value = metadata[key];
@@ -299,6 +465,96 @@ const readStringFromMetadata = (metadata: Record<string, unknown>, keys: string[
   }
 
   return null;
+};
+
+const hasEventTag = (event: SessionEvent | undefined, tag: string) => Array.isArray(event?.tags) && event.tags.includes(tag);
+
+const isShellEvent = (event: SessionEvent | undefined) => hasEventTag(event, 'session-shell');
+
+const isDisconnectedEvent = (event: SessionEvent | undefined) =>
+  event?.status === 'disconnected' || hasEventTag(event, 'session-disconnected');
+
+const isShellSnapshot = (snapshot: SessionSnapshot) => snapshot.state.timeline.some((event) => isShellEvent(event));
+
+const isDisconnectedShellSnapshot = (snapshot: SessionSnapshot) =>
+  isShellSnapshot(snapshot) && snapshot.state.timeline.some((event) => isDisconnectedEvent(event));
+
+const isDisconnectedSnapshot = (snapshot: SessionSnapshot) =>
+  snapshot.state.actors.some((actor) => actor.status === 'disconnected')
+  || snapshot.state.timeline.some((event) => isDisconnectedEvent(event));
+
+const mergeDisconnectedSnapshot = (currentSnapshot: SessionSnapshot, disconnectedSnapshot: SessionSnapshot): SessionSnapshot => {
+  if (isDisconnectedSnapshot(currentSnapshot) && !isShellSnapshot(currentSnapshot)) {
+    return currentSnapshot;
+  }
+
+  if (isShellSnapshot(currentSnapshot)) {
+    return disconnectedSnapshot;
+  }
+
+  const leadActor = currentSnapshot.state.actors.find((actor) => actor.actorType === 'lead') ?? currentSnapshot.state.actors[0];
+  if (!leadActor) {
+    return disconnectedSnapshot;
+  }
+
+  const shellEvent = disconnectedSnapshot.state.timeline[disconnectedSnapshot.state.timeline.length - 1];
+  const timestamp = shellEvent?.timestamp ?? currentSnapshot.state.timeline[currentSnapshot.state.timeline.length - 1]?.timestamp ?? new Date().toISOString();
+  const sequence = currentSnapshot.state.timeline.length + 1;
+  const reason = shellEvent?.summary ?? shellEvent?.action ?? 'live session disconnected';
+  const disconnectedEvent: SessionEvent = {
+    id: `disconnect:${leadActor.id}:${sequence}`,
+    eventType: 'session.updated',
+    sessionId: shellEvent?.sessionId ?? currentSnapshot.state.timeline[currentSnapshot.state.timeline.length - 1]?.sessionId ?? leadActor.id,
+    rootSessionId:
+      shellEvent?.rootSessionId ?? currentSnapshot.state.timeline[currentSnapshot.state.timeline.length - 1]?.rootSessionId ?? leadActor.id,
+    monitorSessionId: currentSnapshot.monitorSessionId,
+    actorId: leadActor.id,
+    parentActorId: null,
+    actorType: 'lead',
+    action: reason,
+    status: 'disconnected',
+    timestamp,
+    sequence,
+    model: leadActor.model,
+    toolName: null,
+    tokenIn: 0,
+    tokenOut: 0,
+    elapsedMs: leadActor.elapsedMs,
+    costEstimate: 0,
+    summary: reason,
+    metadata: {
+      displayName: 'Lead Agent',
+      currentAction: reason,
+      timelineLabel: reason,
+    },
+    tags: ['harness-runtime', 'session-disconnected'],
+    severity: 'warn',
+    monitorEnabled: true,
+    monitorInherited: false,
+    monitorOwnerActorId: leadActor.id,
+  };
+
+  return {
+    ...currentSnapshot,
+    stats: {
+      ...currentSnapshot.stats,
+      activeCount: 0,
+    },
+    timelineCount: sequence,
+    state: {
+      actors: currentSnapshot.state.actors.map((actor) =>
+        actor.id === leadActor.id
+          ? {
+              ...actor,
+              status: 'disconnected',
+              lastEventAt: timestamp,
+              lastEventSequence: sequence,
+            }
+          : actor,
+      ),
+      timeline: [...currentSnapshot.state.timeline, disconnectedEvent],
+    },
+  };
 };
 
 const buildFallbackActorName = (actor: SessionActor) => {
@@ -332,8 +588,22 @@ const getLatestEventByActorId = (snapshot: SessionSnapshot) => {
   return latestByActorId;
 };
 
+const getEventCountByActorId = (snapshot: SessionSnapshot) => {
+  const eventCountByActorId = new Map<string, number>();
+
+  snapshot.state.timeline.forEach((event) => {
+    eventCountByActorId.set(event.actorId, (eventCountByActorId.get(event.actorId) ?? 0) + 1);
+  });
+
+  return eventCountByActorId;
+};
+
 const adaptActors = (snapshot: SessionSnapshot): AdaptedActorViewModel[] => {
   const latestEventByActorId = getLatestEventByActorId(snapshot);
+  const eventCountByActorId = getEventCountByActorId(snapshot);
+  const maxTokenCount = Math.max(1, ...snapshot.state.actors.map((actor) => actor.totalTokens));
+  const maxElapsedMs = Math.max(1, ...snapshot.state.actors.map((actor) => actor.elapsedMs));
+  const maxEventCount = Math.max(1, ...snapshot.state.actors.map((actor) => eventCountByActorId.get(actor.id) ?? 0));
 
   return snapshot.state.actors.map((actor) => {
     const latestEvent = latestEventByActorId.get(actor.id);
@@ -341,6 +611,18 @@ const adaptActors = (snapshot: SessionSnapshot): AdaptedActorViewModel[] => {
     const name = readStringFromMetadata(metadata, ['displayName', 'actorName', 'name']) ?? buildFallbackActorName(actor);
     const currentAction =
       readStringFromMetadata(metadata, ['currentAction', 'actionLabel']) ?? latestEvent?.action ?? actor.summary;
+    const eventCount = eventCountByActorId.get(actor.id) ?? 0;
+    const shellActor = isShellEvent(latestEvent);
+    const disconnectedActor = actor.status === 'disconnected' || isDisconnectedEvent(latestEvent);
+    const progressPercent = shellActor
+      ? 0
+      : clampPercent(
+        statusProgressBase[actor.status]
+        + (actor.totalTokens / maxTokenCount) * 18
+        + (actor.elapsedMs / maxElapsedMs) * 18
+        + (eventCount / maxEventCount) * 12,
+      );
+    const progressStage = disconnectedActor ? 'Disconnected' : shellActor ? 'Syncing' : getProgressStage(progressPercent);
 
     return {
       id: actor.id,
@@ -355,6 +637,8 @@ const adaptActors = (snapshot: SessionSnapshot): AdaptedActorViewModel[] => {
       tokenCount: actor.totalTokens,
       elapsedLabel: formatElapsedMs(actor.elapsedMs),
       updatedAt: formatClockTime(actor.lastEventAt),
+      progressPercent,
+      progressStage,
     };
   });
 };
@@ -366,6 +650,8 @@ const buildRunTreeNodes = (actors: AdaptedActorViewModel[], parentActorId: strin
       id: actor.id,
       name: actor.name,
       role: actor.actorType,
+      status: actor.status,
+      progressPercent: actor.progressPercent,
       children: buildRunTreeNodes(actors, actor.id),
     }));
 
@@ -375,11 +661,15 @@ const buildCrewCards = (actors: AdaptedActorViewModel[], mode: BoardMode): CrewC
     name: actor.name,
     role: titleCase(actor.actorType),
     status: actor.status,
+    actorType: actor.actorType,
     primaryDetail: mode === 'summary' ? actor.summary : `Model ${actor.model}`,
     secondaryDetail:
       mode === 'summary'
         ? `Action ${actor.currentAction}`
         : `Status ${actor.status} · Tool ${actor.latestTool ?? 'none'}`,
+    progressPercent: actor.progressPercent,
+    progressStage: actor.progressStage,
+    progressLabel: `Progress ${actor.progressPercent}%`,
     metricLabel: mode === 'summary' ? `Updated ${actor.updatedAt}` : `Tokens ${actor.tokenCount}`,
   }));
 
@@ -388,6 +678,10 @@ const deriveHealth = (actors: AdaptedActorViewModel[]) => {
 
   if (statuses.has('failed')) {
     return 'failed';
+  }
+
+  if (statuses.has('disconnected')) {
+    return 'disconnected';
   }
 
   if (statuses.has('blocked')) {
@@ -405,9 +699,76 @@ const deriveHealth = (actors: AdaptedActorViewModel[]) => {
   return 'idle';
 };
 
-const buildTopBarStats = (snapshot: SessionSnapshot, actors: AdaptedActorViewModel[]) => ({
+const buildOverallProgress = (snapshot: SessionSnapshot, actors: AdaptedActorViewModel[]): OverallProgressViewModel => {
+  if (isDisconnectedShellSnapshot(snapshot)) {
+    return {
+      label: 'Quest 0%',
+      detail: 'live shell · disconnected',
+      percent: 0,
+      stage: 'Disconnected',
+    };
+  }
+
+  if (isShellSnapshot(snapshot)) {
+    return {
+      label: 'Quest 0%',
+      detail: 'live shell · waiting for runtime data',
+      percent: 0,
+      stage: 'Syncing',
+    };
+  }
+
+  const doneCount = actors.filter((actor) => actor.status === 'done').length;
+  const percent = clampPercent(
+    actors.reduce((total, actor) => total + actor.progressPercent, 0) / Math.max(1, actors.length),
+  );
+
+  if (actors.some((actor) => actor.status === 'disconnected')) {
+    return {
+      label: `Quest ${percent}%`,
+      detail: 'live session disconnected',
+      percent,
+      stage: 'Disconnected',
+    };
+  }
+
+  return {
+    label: `Quest ${percent}%`,
+    detail: `${snapshot.stats.activeCount} active · ${snapshot.stats.blockedCount} blocked · ${doneCount} done`,
+    percent,
+    stage: getProgressStage(percent),
+  };
+};
+
+const buildProgressBoardRows = (actors: AdaptedActorViewModel[]): ProgressBoardRowViewModel[] =>
+  actors.map((actor) => ({
+    id: actor.id,
+    name: actor.name,
+    role: titleCase(actor.actorType),
+    status: actor.status,
+    stage: actor.progressStage,
+    progressPercent: actor.progressPercent,
+    detail: `${actor.currentAction} · ${actor.elapsedLabel}`,
+  }));
+
+const buildFocusTargetViewModel = (actor: AdaptedActorViewModel | null): FocusTargetViewModel | null => {
+  if (!actor) {
+    return null;
+  }
+
+  return {
+    name: actor.name,
+    role: titleCase(actor.actorType),
+    status: actor.status,
+    stage: actor.progressStage,
+    progressPercent: actor.progressPercent,
+    currentAction: actor.currentAction,
+  };
+};
+
+const buildTopBarStats = (snapshot: SessionSnapshot, actors: AdaptedActorViewModel[], overallProgress: OverallProgressViewModel) => ({
   mission: snapshot.monitorSessionId,
-  progress: `${snapshot.stats.activeCount}/${snapshot.actorCount} active`,
+  progress: `${overallProgress.percent}% quest`,
   tokens: snapshot.stats.totalTokens.toLocaleString(),
   elapsed: formatElapsedMs(snapshot.stats.elapsedMs),
   actors: String(snapshot.actorCount),
@@ -425,12 +786,21 @@ const buildTimelineEntries = (
     .filter((entry) => !selectedActorId || entry.actorId === selectedActorId)
     .map((entry) => {
       const metadata = isRecord(entry.metadata) ? entry.metadata : {};
-      const summary = readStringFromMetadata(metadata, ['timelineLabel', 'timelineSummary']) ?? entry.action ?? entry.summary;
+      const summary = readStringFromMetadata(metadata, ['timelineSummary', 'timelineLabel']) ?? entry.summary ?? entry.action;
+      const actor = actorsById.get(entry.actorId);
+      const actorName = actor?.name ?? 'Unknown Actor';
+      const actorType = actor?.actorType ?? entry.actorType ?? 'worker';
+      const timestamp = formatClockTime(entry.timestamp);
 
       return {
         id: entry.id,
         actorId: entry.actorId,
-        label: `[${formatClockTime(entry.timestamp)}] ${actorsById.get(entry.actorId)?.name ?? 'Unknown Actor'} ${summary}`,
+        actorName,
+        actorType,
+        status: entry.status,
+        timestamp,
+        machineCode: `EVT-${String(entry.sequence).padStart(2, '0')}`,
+        summary,
       };
     });
 };
@@ -441,6 +811,7 @@ const buildFocusDrawerViewModel = (actor: AdaptedActorViewModel | null, mode: Bo
       title: `FOCUS ${mode === 'summary' ? 'SUMMARY' : 'METADATA'}`,
       focusLine: 'Focus: none',
       detailLines: ['Select an actor to inspect the current task lane.'],
+      chips: ['NO TARGET', `MODE ${mode.toUpperCase()}`],
     };
   }
 
@@ -449,9 +820,54 @@ const buildFocusDrawerViewModel = (actor: AdaptedActorViewModel | null, mode: Bo
     focusLine: `Focus: ${actor.name}`,
     detailLines:
       mode === 'summary'
-        ? [actor.summary, `Action: ${actor.currentAction}`]
-        : [`Model: ${actor.model}`, `Status: ${actor.status} · Tokens: ${actor.tokenCount}`],
+        ? [actor.summary, `Action: ${actor.currentAction}`, `Lane progress: ${actor.progressPercent}%`, `Stage: ${actor.progressStage}`]
+        : [`Model: ${actor.model}`, `Status: ${actor.status} · Tokens: ${actor.tokenCount}`, `Lane progress: ${actor.progressPercent}%`, `Stage: ${actor.progressStage}`],
+    chips: [actor.actorType.toUpperCase(), actor.status.toUpperCase(), actor.progressStage.toUpperCase(), `MODE ${mode.toUpperCase()}`, `TOOL ${(actor.latestTool ?? 'none').toUpperCase()}`],
   };
+};
+
+const ProgressBoardPanel = ({
+  overallProgress,
+  rows,
+}: {
+  overallProgress: OverallProgressViewModel;
+  rows: ProgressBoardRowViewModel[];
+}) => {
+  return (
+    <section className="pixel-panel board-panel">
+      <div className="panel-section progress-board-panel">
+        <h2 className="panel-title">PROGRESS BOARD</h2>
+        <div className="progress-board-quest">
+          <div className="progress-board-quest-copy">
+            <span className="progress-board-quest-label">Quest Stage</span>
+            <strong className="progress-board-quest-stage">{overallProgress.stage}</strong>
+            <span className="progress-board-quest-detail">{overallProgress.label} · {overallProgress.detail}</span>
+          </div>
+          <span className="progress-board-quest-track" aria-hidden="true">
+            <span className="progress-board-quest-fill" style={{ width: `${overallProgress.percent}%` }} />
+          </span>
+        </div>
+        <div className="progress-board-list" role="list" aria-label="Agent progress board">
+          {rows.map((row) => (
+            <div key={row.id} className="progress-board-row" role="listitem" data-status={row.status}>
+              <div className="progress-board-row-head">
+                <span className="progress-board-row-name">{row.name}</span>
+                <span className="progress-board-row-role">{row.role}</span>
+                <span className="progress-board-row-stage">{row.stage}</span>
+              </div>
+              <span className="progress-board-row-detail">{row.detail}</span>
+              <div className="progress-board-row-progress">
+                <span className="progress-board-row-track" aria-hidden="true">
+                  <span className="progress-board-row-fill" style={{ width: `${row.progressPercent}%` }} />
+                </span>
+                <span className="progress-board-row-value">{row.progressPercent}%</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
 };
 
 const isSessionSnapshot = (payload: unknown): payload is SessionSnapshot => {
@@ -470,13 +886,19 @@ export const App = ({
   initialSnapshot,
   socketUrl = DEFAULT_SOCKET_URL,
   connectSocket = connectBoardSocket,
+  targetMonitorSessionId = null,
 }: AppProps) => {
-  const resolvedInitialSnapshot = useMemo(() => initialSnapshot ?? resolveDemoSnapshot(), [initialSnapshot]);
+  const resolvedInitialSnapshot = useMemo(
+    () => resolveInitialSnapshot(initialSnapshot, targetMonitorSessionId),
+    [initialSnapshot, targetMonitorSessionId],
+  );
   const [snapshot, setSnapshot] = useState<SessionSnapshot>(resolvedInitialSnapshot);
 
   const mode = useBoardStore((state) => state.mode);
+  const activePanelTab = useBoardStore((state) => state.activePanelTab);
   const selectedActorId = useBoardStore((state) => state.selectedActorId);
   const setMode = useBoardStore((state) => state.setMode);
+  const setActivePanelTab = useBoardStore((state) => state.setActivePanelTab);
   const setSelectedActorId = useBoardStore((state) => state.setSelectedActorId);
 
   useEffect(() => {
@@ -485,21 +907,31 @@ export const App = ({
 
   useEffect(() => {
     let socket: BoardSocketConnection | null = null;
+    let cancelled = false;
+    const connectionTimer = globalThis.setTimeout(() => {
+      if (cancelled) {
+        return;
+      }
 
-    try {
-      socket = connectSocket(socketUrl, (payload) => {
-        if (isSessionSnapshot(payload)) {
-          setSnapshot(payload);
-        }
-      });
-    } catch {
-      return undefined;
-    }
+      try {
+        socket = connectSocket(socketUrl, (payload) => {
+          if (isSessionSnapshot(payload) && (!targetMonitorSessionId || payload.monitorSessionId === targetMonitorSessionId)) {
+            setSnapshot((currentSnapshot) =>
+              isDisconnectedShellSnapshot(payload) ? mergeDisconnectedSnapshot(currentSnapshot, payload) : payload,
+            );
+          }
+        });
+      } catch {
+        socket = null;
+      }
+    }, 0);
 
     return () => {
+      cancelled = true;
+      globalThis.clearTimeout(connectionTimer);
       socket?.close();
     };
-  }, [connectSocket, socketUrl]);
+  }, [connectSocket, socketUrl, targetMonitorSessionId]);
 
   const actors = useMemo(() => adaptActors(snapshot), [snapshot]);
   const leadActorId = actors.find((actor) => actor.actorType === 'lead')?.id ?? actors[0]?.id ?? null;
@@ -512,10 +944,13 @@ export const App = ({
     }
   }, [resolvedSelectedActorId, selectedActorId, setSelectedActorId]);
 
-  const topBarStats = useMemo(() => buildTopBarStats(snapshot, actors), [snapshot, actors]);
+  const overallProgress = useMemo(() => buildOverallProgress(snapshot, actors), [snapshot, actors]);
+  const topBarStats = useMemo(() => buildTopBarStats(snapshot, actors, overallProgress), [snapshot, actors, overallProgress]);
   const runTreeNodes = useMemo(() => buildRunTreeNodes(actors, null), [actors]);
   const crewCards = useMemo(() => buildCrewCards(actors, mode), [actors, mode]);
+  const progressBoardRows = useMemo(() => buildProgressBoardRows(actors), [actors]);
   const selectedActor = actors.find((actor) => actor.id === resolvedSelectedActorId) ?? null;
+  const focusTarget = useMemo(() => buildFocusTargetViewModel(selectedActor), [selectedActor]);
   const focusDrawerViewModel = useMemo(
     () => buildFocusDrawerViewModel(selectedActor, mode),
     [selectedActor, mode],
@@ -527,14 +962,47 @@ export const App = ({
 
   return (
     <div className="board-shell" data-mode={mode} data-selected-actor-id={resolvedSelectedActorId ?? ''}>
-      <TopBar mode={mode} onModeChange={setMode} stats={topBarStats} />
+      <TopBar
+        mode={mode}
+        onModeChange={setMode}
+        stats={topBarStats}
+        overallProgress={overallProgress}
+        focusedActor={focusTarget}
+      />
       <main className="board-grid board-main">
-        <RunTree nodes={runTreeNodes} selectedActorId={resolvedSelectedActorId} />
         <div className="board-center-stack">
           <CrewGrid actors={crewCards} selectedActorId={resolvedSelectedActorId} onFocus={setSelectedActorId} />
           <FocusDrawer viewModel={focusDrawerViewModel} />
         </div>
-        <TimelinePanel entries={visibleTimelineEntries} />
+        <div className="board-side-stack">
+          <div className="board-panel-switch" role="group" aria-label="Operations deck tabs">
+            {operationsDeckTabs.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                className={`mode-button board-panel-tab${activePanelTab === tab.id ? ' is-active' : ''}`}
+                onClick={() => setActivePanelTab(tab.id)}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+          {activePanelTab === 'timeline' ? (
+            <TimelinePanel
+              entries={visibleTimelineEntries}
+              focusLabel={focusTarget ? `LOG LOCK · ${focusTarget.name.toUpperCase()}` : 'LOG LOCK · ALL LANES'}
+              focusDetail={
+                focusTarget
+                  ? `${focusTarget.role} · ${focusTarget.status.toUpperCase()} · ${focusTarget.stage.toUpperCase()} · ${focusTarget.progressPercent}%`
+                  : 'Quest-wide event feed'
+              }
+            />
+          ) : activePanelTab === 'runTree' ? (
+            <RunTree nodes={runTreeNodes} selectedActorId={resolvedSelectedActorId} />
+          ) : (
+            <ProgressBoardPanel overallProgress={overallProgress} rows={progressBoardRows} />
+          )}
+        </div>
       </main>
     </div>
   );

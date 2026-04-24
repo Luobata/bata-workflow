@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 const DEFAULT_REQUESTER_ACTOR_ID = 'lead'
 const DEFAULT_BOARD_HOST = '127.0.0.1'
 const DEFAULT_BOARD_PORT = 5173
+const DEFAULT_STATE_ROOT_SEGMENTS = ['.harness', 'state']
 
 const isDefaultRootActorId = (actorId) =>
   actorId === DEFAULT_REQUESTER_ACTOR_ID || actorId.startsWith(`${DEFAULT_REQUESTER_ACTOR_ID}-`)
@@ -13,6 +14,11 @@ const isDefaultRootActorId = (actorId) =>
 const deriveWorkspaceHashSessionId = (cwd) => {
   const hash = createHash('sha1').update(cwd).digest('hex').slice(0, 12)
   return `workspace-${hash}`
+}
+
+const resolveLiveCocoSessionId = () => {
+  const sessionId = process.env.COCO_SESSION_ID?.trim()
+  return sessionId ? sessionId : null
 }
 
 const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value, key)
@@ -33,6 +39,11 @@ const resolveBoardPort = (value) => {
   }
 
   return DEFAULT_BOARD_PORT
+}
+
+const resolveHarnessStateRoot = (cwd, options) => {
+  const candidate = options.stateRoot ?? process.env.HARNESS_STATE_ROOT ?? process.env.MONITOR_STATE_ROOT
+  return candidate ? resolve(cwd, candidate) : resolve(cwd, ...DEFAULT_STATE_ROOT_SEGMENTS)
 }
 
 const findBoardRepoRoot = (startPath) => {
@@ -67,17 +78,18 @@ export function getSessionStateFileName(rootSessionId) {
 export function resolveMonitorContext(options = {}) {
   const cwd = resolve(options.cwd ?? process.cwd())
   const homeDir = resolve(options.homeDir ?? process.env.HOME ?? process.env.USERPROFILE ?? cwd)
-  const stateRoot = resolve(cwd, '.harness', 'state', 'monitor-sessions')
+  const harnessStateRoot = resolveHarnessStateRoot(cwd, options)
+  const stateRoot = resolve(harnessStateRoot, 'monitor-sessions')
   const boardRepoRoot = findBoardRepoRoot(cwd) ?? findBoardRepoRootFromSkillSource()
   const boardHost = options.boardHost ?? DEFAULT_BOARD_HOST
   const boardPort = resolveBoardPort(options.boardPort)
   const boardRuntimeStatePath = boardRepoRoot
-    ? resolve(boardRepoRoot, '.harness', 'state', 'monitor-board', 'runtime.json')
+    ? resolve(harnessStateRoot, 'monitor-board', 'runtime.json')
     : null
 
   mkdirSync(stateRoot, { recursive: true })
 
-  const rootSessionId = options.rootSessionId ?? process.env.COCO_SESSION_ID ?? deriveWorkspaceHashSessionId(cwd)
+  const rootSessionId = options.rootSessionId ?? resolveLiveCocoSessionId() ?? deriveWorkspaceHashSessionId(cwd)
   const requesterActorId = options.requesterActorId ?? process.env.COCO_ACTOR_ID ?? DEFAULT_REQUESTER_ACTOR_ID
   const isRootActor = resolveBooleanOption(options, 'isRootActor', isDefaultRootActorId(requesterActorId))
   const stateFilePath = resolve(stateRoot, getSessionStateFileName(rootSessionId))
@@ -86,6 +98,7 @@ export function resolveMonitorContext(options = {}) {
   return {
     cwd,
     homeDir,
+    harnessStateRoot,
     stateRoot,
     stateFilePath,
     rootSessionId,

@@ -4,6 +4,8 @@ export interface RunTreeNode {
   id: string;
   name: string;
   role: string;
+  status: string;
+  progressPercent: number;
   children?: RunTreeNode[];
 }
 
@@ -17,9 +19,29 @@ const TreeBranch = ({ node, selectedActorId, depth }: { node: RunTreeNode; selec
 
   return (
     <li role="treeitem" aria-selected={isSelected} aria-level={depth + 1}>
-      <div className={`run-tree-item${isSelected ? ' is-selected' : ''}`} style={{ paddingLeft: `${depth * 14}px` }}>
-        <span>{node.name}</span>
-        <span className="run-tree-role">{node.role}</span>
+      <div
+        className={`run-tree-item${isSelected ? ' is-selected' : ''}`}
+        data-role={node.role}
+        data-status={node.status}
+        data-depth={depth}
+        style={{ paddingLeft: `${depth * 14}px` }}
+      >
+        <span className="run-tree-lane" aria-hidden="true">
+          <span className="run-tree-node-core" />
+        </span>
+        <span className="run-tree-node-copy">
+          <span className="run-tree-node-head">
+            <span className="run-tree-node-name">{node.name}</span>
+            <span className="run-tree-role">{node.role}</span>
+          </span>
+          <span className="run-tree-node-progress">
+            <span className="run-tree-node-progress-track" aria-hidden="true">
+              <span className="run-tree-node-progress-fill" style={{ width: `${node.progressPercent}%` }} />
+            </span>
+            <span className="run-tree-node-progress-label">{node.progressPercent}%</span>
+          </span>
+        </span>
+        <span className="run-tree-node-state">{node.status}</span>
       </div>
       {node.children?.length ? (
         <ul className="run-tree-list" role="group">

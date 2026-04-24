@@ -157,4 +157,84 @@ describe('createGatewayServer', () => {
     client.close();
     await closeGatewayServer(gateway);
   });
+
+  it('bootstraps websocket clients with snapshots injected from harness state polling', async () => {
+    const gateway = createGatewayServer(0);
+    const address = gateway.server.address();
+
+    if (!address || typeof address === 'string') {
+      throw new Error('expected websocket server to expose an ephemeral port');
+    }
+
+    gateway.replaceSnapshots([
+      {
+        monitorSessionId: 'monitor:workspace-1',
+        stats: {
+          actorCount: 2,
+          activeCount: 1,
+          blockedCount: 0,
+          totalTokens: 0,
+          elapsedMs: 4200,
+        },
+        actorCount: 2,
+        timelineCount: 1,
+        state: {
+          actors: [
+            {
+              id: 'lead:workspace-1',
+              parentActorId: null,
+              actorType: 'lead',
+              status: 'active',
+              summary: 'goal',
+              model: null,
+              toolName: null,
+              totalTokens: 0,
+              elapsedMs: 4200,
+              children: ['T1'],
+              lastEventAt: '2026-04-18T10:00:00.000Z',
+              lastEventSequence: 1,
+            },
+            {
+              id: 'T1',
+              parentActorId: 'lead:workspace-1',
+              actorType: 'subagent',
+              status: 'active',
+              summary: 'Implement live bridge',
+              model: 'gpt-5.4',
+              toolName: null,
+              totalTokens: 0,
+              elapsedMs: 2100,
+              children: [],
+              lastEventAt: '2026-04-18T10:00:00.000Z',
+              lastEventSequence: 1,
+            },
+          ],
+          timeline: [createEvent('monitor:workspace-1')],
+        },
+      },
+    ]);
+
+    const client = new WebSocket(`ws://127.0.0.1:${address.port}`);
+    const payloadPromise = waitForMessage(client);
+
+    await waitForOpen(client);
+
+    const payload = JSON.parse(await payloadPromise) as {
+      monitorSessionId: string;
+      actorCount: number;
+      state: {
+        actors: Array<{ id: string }>;
+      };
+    };
+
+    expect(payload.monitorSessionId).toBe('monitor:workspace-1');
+    expect(payload.actorCount).toBe(2);
+    expect(payload.state.actors).toEqual([
+      expect.objectContaining({ id: 'lead:workspace-1' }),
+      expect.objectContaining({ id: 'T1' }),
+    ]);
+
+    client.close();
+    await closeGatewayServer(gateway);
+  });
 });

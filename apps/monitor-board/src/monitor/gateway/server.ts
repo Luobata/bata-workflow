@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module';
 import type { AddressInfo } from 'node:net';
-import type { BoardEvent } from '@monitor/protocol';
-import { SessionRegistry } from './session-registry';
+import type { BoardEvent } from '../protocol';
+import { SessionRegistry, type SessionSnapshot } from './session-registry';
 
 interface GatewayClient {
   readyState: number;
@@ -26,6 +26,8 @@ const wsModule = require('ws') as {
 export const createGatewayServer = (port = 8787) => {
   const registry = new SessionRegistry();
   const server = new wsModule.WebSocketServer({ port });
+  const snapshots = new Map<string, SessionSnapshot>();
+  const payloadByMonitorSessionId = new Map<string, string>();
 
   const sendSnapshot = (client: GatewayClient, payload: string) => {
     if (client.readyState === wsModule.WebSocket.OPEN) {
@@ -33,26 +35,59 @@ export const createGatewayServer = (port = 8787) => {
     }
   };
 
+  const broadcastPayload = (payload: string) => {
+    server.clients.forEach((client) => {
+      sendSnapshot(client, payload);
+    });
+  };
+
+  const publishSnapshot = (snapshot: SessionSnapshot) => {
+    const payload = JSON.stringify(snapshot);
+    const previousPayload = payloadByMonitorSessionId.get(snapshot.monitorSessionId);
+
+    snapshots.set(snapshot.monitorSessionId, snapshot);
+    payloadByMonitorSessionId.set(snapshot.monitorSessionId, payload);
+
+    if (previousPayload !== payload) {
+      broadcastPayload(payload);
+    }
+
+    return snapshot;
+  };
+
   server.on('connection', (client) => {
-    registry.listSnapshots().forEach((snapshot) => {
+    snapshots.forEach((snapshot) => {
       sendSnapshot(client, JSON.stringify(snapshot));
     });
   });
 
   const publish = (event: BoardEvent) => {
-    const snapshot = registry.append(event);
-    const payload = JSON.stringify(snapshot);
+    return publishSnapshot(registry.append(event));
+  };
 
-    server.clients.forEach((client) => {
-      sendSnapshot(client, payload);
+  const replaceSnapshots = (nextSnapshots: SessionSnapshot[]) => {
+    const nextMonitorSessionIds = new Set(nextSnapshots.map((snapshot) => snapshot.monitorSessionId));
+
+    [...snapshots.keys()].forEach((monitorSessionId) => {
+      if (!nextMonitorSessionIds.has(monitorSessionId)) {
+        snapshots.delete(monitorSessionId);
+        payloadByMonitorSessionId.delete(monitorSessionId);
+      }
     });
 
-    return snapshot;
+    nextSnapshots.forEach((snapshot) => {
+      publishSnapshot(snapshot);
+    });
+
+    return [...snapshots.values()];
   };
 
   return {
     server,
     registry,
     publish,
+    publishSnapshot,
+    replaceSnapshots,
+    listSnapshots: () => [...snapshots.values()],
   };
 };

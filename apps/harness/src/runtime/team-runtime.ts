@@ -1,8 +1,12 @@
+import { createHash } from 'node:crypto'
+import { resolve } from 'node:path'
+
 import type { CocoExecutionRequest, CocoAdapter } from './coco-adapter.js'
 import { createTaskQueue, loadTaskQueue, PersistentTaskQueue, rerouteFailedTask, retryFailedTask } from './task-queue.js'
 import { shouldRetryTask } from './failure-policy.js'
 import { readPendingControlCommands, type RuntimeControlCommand } from './control-channel.js'
 import { buildTaskArtifacts, captureTaskArtifactSnapshot } from './task-artifacts.js'
+import type { TaskQueueSnapshot } from './task-store.js'
 import type {
   DispatchAssignment,
   ExecutionBatch,
@@ -20,6 +24,18 @@ function now(): string {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function deriveMonitorRunMetadata(workspaceRoot: string): NonNullable<TaskQueueSnapshot['monitor']> {
+  const normalizedWorkspaceRoot = resolve(workspaceRoot)
+  const liveCocoSessionId = process.env.COCO_SESSION_ID?.trim()
+  const rootSessionId = liveCocoSessionId || `workspace-${createHash('sha1').update(normalizedWorkspaceRoot).digest('hex').slice(0, 12)}`
+
+  return {
+    rootSessionId,
+    monitorSessionId: `monitor:${rootSessionId}`,
+    workspaceRoot: normalizedWorkspaceRoot
+  }
 }
 
 function buildNextAttemptAt(retryDelayMs: number): string | null {
@@ -476,7 +492,8 @@ export async function runAssignmentsWithRuntime(params: {
         plan: plan ?? { goal: goal ?? 'unknown goal', summary: '', tasks: [] },
         assignments: assignments ?? [],
         batches: batches ?? [],
-        workerPool: workerPool ?? { maxConcurrency: 2 }
+        workerPool: workerPool ?? { maxConcurrency: 2 },
+        monitor: deriveMonitorRunMetadata(workspaceRoot)
       })
 
   if (!queue.hasEvent('run-started')) {

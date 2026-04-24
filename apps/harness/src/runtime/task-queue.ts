@@ -179,6 +179,7 @@ export interface CreateTaskQueueParams {
   assignments: DispatchAssignment[]
   batches: RuntimeSnapshot['batches']
   workerPool: WorkerPoolConfig
+  monitor?: TaskQueueSnapshot['monitor']
 }
 
 export interface AppendGeneratedTaskParams {
@@ -230,7 +231,7 @@ export class PersistentTaskQueue {
   }
 
   static create(params: CreateTaskQueueParams): PersistentTaskQueue {
-    const { runDirectory, goal, plan, assignments, batches, workerPool } = params
+    const { runDirectory, goal, plan, assignments, batches, workerPool, monitor = null } = params
     const createdAt = now()
     const tasks = assignments.map((assignment) => ({
       taskId: assignment.task.id,
@@ -256,7 +257,8 @@ export class PersistentTaskQueue {
       completedTaskIds: [],
       failedTaskIds: [],
       events: [],
-      mailbox: []
+      mailbox: [],
+      monitor
     }
 
     const taskQueue = new PersistentTaskQueue(runDirectory, goal, plan, queue, tasks)

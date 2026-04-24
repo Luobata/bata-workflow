@@ -10,6 +10,7 @@ import type { DispatchAssignment } from '../src/domain/types.js'
 import { AutoFallbackCocoAdapter, CocoCliAdapter, type CocoAdapter } from '../src/runtime/coco-adapter.js'
 import { appendControlCommand } from '../src/runtime/control-channel.js'
 import { readAllRuntimeEvents } from '../src/runtime/event-stream.js'
+import { getQueuePath } from '../src/runtime/task-store.js'
 import { runAssignmentsWithRuntime } from '../src/runtime/team-runtime.js'
 
 function runGit(cwd: string, args: string[]): void {
@@ -115,6 +116,62 @@ function createAssignments(taskIds: string[]): DispatchAssignment[] {
 }
 
 describe('team runtime control channel', () => {
+  it('persists monitor session metadata into queue state for live monitor bridging', async () => {
+    const runDirectory = mkdtempSync(resolve(tmpdir(), 'harness-team-runtime-monitor-'))
+    const previousSessionId = process.env.COCO_SESSION_ID
+    process.env.COCO_SESSION_ID = 'workspace-monitor-test'
+
+    class MonitorAdapter implements CocoAdapter {
+      async execute({ assignment }) {
+        return {
+          taskId: assignment.task.id,
+          role: assignment.roleDefinition.name,
+          model: assignment.modelResolution.model,
+          summary: `done ${assignment.task.id}`,
+          status: 'completed' as const,
+          attempt: 1
+        }
+      }
+    }
+
+    try {
+      await runAssignmentsWithRuntime({
+        workspaceRoot: '/tmp/monitor-workspace',
+        runDirectory,
+        goal: 'monitor goal',
+        plan: {
+          goal: 'monitor goal',
+          summary: 'monitor summary',
+          tasks: createAssignments(['T1']).map((assignment) => assignment.task)
+        },
+        assignments: createAssignments(['T1']),
+        batches: [{ batchId: 'B1', taskIds: ['T1'] }],
+        adapter: new MonitorAdapter(),
+        workerPool: { maxConcurrency: 1 }
+      })
+
+      const queue = JSON.parse(readFileSync(getQueuePath(runDirectory), 'utf8')) as {
+        monitor?: {
+          rootSessionId: string
+          monitorSessionId: string
+          workspaceRoot: string
+        } | null
+      }
+
+      expect(queue.monitor).toEqual({
+        rootSessionId: 'workspace-monitor-test',
+        monitorSessionId: 'monitor:workspace-monitor-test',
+        workspaceRoot: '/tmp/monitor-workspace'
+      })
+    } finally {
+      if (previousSessionId === undefined) {
+        delete process.env.COCO_SESSION_ID
+      } else {
+        process.env.COCO_SESSION_ID = previousSessionId
+      }
+    }
+  })
+
   it('收到 abort-run 控制命令后停止领取新任务，允许 in-flight 自然收口', async () => {
     const runDirectory = mkdtempSync(resolve(tmpdir(), 'harness-team-runtime-abort-'))
     const assignments = createAssignments(['T1', 'T2'])

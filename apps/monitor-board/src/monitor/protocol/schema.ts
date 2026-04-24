@@ -23,7 +23,7 @@ export const EventTypeSchema = z.enum([
 export const ToolEventTypeSchema = z.enum(toolEventTypes);
 export const NonToolEventTypeSchema = z.enum(nonToolEventTypes);
 
-export const StatusSchema = z.enum(['idle', 'active', 'blocked', 'done', 'failed', 'canceled']);
+export const StatusSchema = z.enum(['idle', 'active', 'blocked', 'done', 'failed', 'canceled', 'disconnected']);
 
 export const SeveritySchema = z.enum(['info', 'warn', 'error']);
 

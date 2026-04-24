@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -11,14 +11,34 @@ import type { TeamCompositionRegistry } from '../src/team/team-composition-loade
 import type { GoalInput } from '../src/domain/types.js'
 import type { CocoAdapter } from '../src/runtime/coco-adapter.js'
 import {
+  cleanupMonitorSessionForWorkspace,
   createRunSession,
   loadTmuxManagerModule,
   prepareTeamRunSpecWithTmuxBindings,
   resolveTmuxManagerFallbackSpecifiers
 } from '../src/runtime/run-session.js'
 
+const tempRoots: string[] = []
+const originalCocoSessionId = process.env.COCO_SESSION_ID
+
+const createTempRoot = (prefix: string): string => {
+  const root = mkdtempSync(resolve(tmpdir(), prefix))
+  tempRoots.push(root)
+  return root
+}
+
 afterEach(() => {
   vi.useRealTimers()
+
+  if (originalCocoSessionId === undefined) {
+    delete process.env.COCO_SESSION_ID
+  } else {
+    process.env.COCO_SESSION_ID = originalCocoSessionId
+  }
+
+  for (const root of tempRoots.splice(0)) {
+    rmSync(root, { recursive: true, force: true })
+  }
 })
 
 const noopAdapter: CocoAdapter = {
@@ -252,8 +272,9 @@ describe('run session tmux bootstrap', () => {
 
   it('start 会在 prepareInput 卡住时按启动超时报错', async () => {
     vi.useFakeTimers()
-    const stateRoot = mkdtempSync(resolve(tmpdir(), 'harness-run-session-state-'))
-    const runDirectory = mkdtempSync(resolve(tmpdir(), 'harness-run-session-start-'))
+    const stateRoot = createTempRoot('harness-run-session-state-')
+    const runDirectory = createTempRoot('harness-run-session-start-')
+    const cleanupMonitorSession = vi.fn().mockResolvedValue(undefined)
     const session = createRunSession({
       workspaceRoot: '/workspace/root',
       stateRoot,
@@ -264,7 +285,8 @@ describe('run session tmux bootstrap', () => {
       modelConfig,
       failurePolicyConfig,
       teamCompositionRegistry,
-      prepareInput: async () => await new Promise<GoalInput>(() => undefined)
+      prepareInput: async () => await new Promise<GoalInput>(() => undefined),
+      cleanupMonitorSession,
     })
 
     const startPromise = session.start()
@@ -272,5 +294,212 @@ describe('run session tmux bootstrap', () => {
     await vi.advanceTimersByTimeAsync(5001)
 
     await rejection
+    expect(cleanupMonitorSession).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceRoot: '/workspace/root',
+      stateRoot,
+    }))
+  })
+
+  it('removes only the current session lease when other monitor sessions still reference the board', async () => {
+    const workspaceRoot = createTempRoot('harness-monitor-workspace-')
+    const stateRoot = resolve(workspaceRoot, '.harness', 'state')
+    const rootSessionId = 'workspace-a'
+    const sessionStatePath = resolve(stateRoot, 'monitor-sessions', `${encodeURIComponent(rootSessionId)}.json`)
+    const boardRuntimeStatePath = resolve(stateRoot, 'monitor-board', 'runtime.json')
+    const cleanupMonitorBoardProcess = vi.fn().mockResolvedValue(undefined)
+
+    mkdirSync(resolve(stateRoot, 'monitor-sessions'), { recursive: true })
+    writeFileSync(sessionStatePath, '{"status":"active"}\n', 'utf8')
+    mkdirSync(resolve(stateRoot, 'monitor-board'), { recursive: true })
+    writeFileSync(
+      boardRuntimeStatePath,
+      `${JSON.stringify({ pid: 43210, activeRootSessionIds: [rootSessionId, 'workspace-b'] })}\n`,
+      'utf8',
+    )
+
+    const result = await cleanupMonitorSessionForWorkspace({
+      workspaceRoot,
+      stateRoot,
+      rootSessionId,
+      cleanupMonitorBoardProcess,
+    })
+
+    expect(result).toMatchObject({
+      boardAction: 'released',
+      rootSessionId,
+      sessionStateRemoved: true,
+      remainingActiveRootSessionIds: ['workspace-b'],
+    })
+    expect(existsSync(sessionStatePath)).toBe(false)
+    expect(cleanupMonitorBoardProcess).not.toHaveBeenCalled()
+    expect(JSON.parse(readFileSync(boardRuntimeStatePath, 'utf8'))).toMatchObject({
+      activeRootSessionIds: ['workspace-b'],
+      pid: 43210,
+    })
+  })
+
+  it('stops the monitor board when the last tracked monitor session ends', async () => {
+    const workspaceRoot = createTempRoot('harness-monitor-workspace-')
+    const stateRoot = resolve(workspaceRoot, '.harness', 'state')
+    const rootSessionId = 'workspace-a'
+    const sessionStatePath = resolve(stateRoot, 'monitor-sessions', `${encodeURIComponent(rootSessionId)}.json`)
+    const boardRuntimeStatePath = resolve(stateRoot, 'monitor-board', 'runtime.json')
+    const cleanupMonitorBoardProcess = vi.fn().mockResolvedValue(undefined)
+
+    mkdirSync(resolve(stateRoot, 'monitor-sessions'), { recursive: true })
+    writeFileSync(sessionStatePath, '{"status":"active"}\n', 'utf8')
+    mkdirSync(resolve(stateRoot, 'monitor-board'), { recursive: true })
+    writeFileSync(
+      boardRuntimeStatePath,
+      `${JSON.stringify({ pid: 43210, activeRootSessionIds: [rootSessionId] })}\n`,
+      'utf8',
+    )
+
+    const result = await cleanupMonitorSessionForWorkspace({
+      workspaceRoot,
+      stateRoot,
+      rootSessionId,
+      cleanupMonitorBoardProcess,
+    })
+
+    expect(result).toMatchObject({
+      boardAction: 'stopped',
+      rootSessionId,
+      sessionStateRemoved: true,
+      remainingActiveRootSessionIds: [],
+    })
+    expect(cleanupMonitorBoardProcess).toHaveBeenCalledWith(43210)
+    expect(existsSync(sessionStatePath)).toBe(false)
+    expect(existsSync(boardRuntimeStatePath)).toBe(false)
+  })
+
+  it('does not stop the monitor board when runtime state has no tracked root session ids', async () => {
+    const workspaceRoot = createTempRoot('harness-monitor-workspace-')
+    const stateRoot = resolve(workspaceRoot, '.harness', 'state')
+    const rootSessionId = 'workspace-a'
+    const sessionStatePath = resolve(stateRoot, 'monitor-sessions', `${encodeURIComponent(rootSessionId)}.json`)
+    const boardRuntimeStatePath = resolve(stateRoot, 'monitor-board', 'runtime.json')
+    const cleanupMonitorBoardProcess = vi.fn().mockResolvedValue(undefined)
+
+    mkdirSync(resolve(stateRoot, 'monitor-sessions'), { recursive: true })
+    writeFileSync(sessionStatePath, '{"status":"active"}\n', 'utf8')
+    mkdirSync(resolve(stateRoot, 'monitor-board'), { recursive: true })
+    writeFileSync(
+      boardRuntimeStatePath,
+      `${JSON.stringify({ pid: 43210 })}\n`,
+      'utf8',
+    )
+
+    const result = await cleanupMonitorSessionForWorkspace({
+      workspaceRoot,
+      stateRoot,
+      rootSessionId,
+      cleanupMonitorBoardProcess,
+    })
+
+    expect(result).toMatchObject({
+      boardAction: 'none',
+      rootSessionId,
+      sessionStateRemoved: true,
+      remainingActiveRootSessionIds: [],
+    })
+    expect(cleanupMonitorBoardProcess).not.toHaveBeenCalled()
+    expect(existsSync(sessionStatePath)).toBe(false)
+    expect(existsSync(boardRuntimeStatePath)).toBe(true)
+  })
+
+  it('releases the tracked board session even when the monitor session file is already missing', async () => {
+    const workspaceRoot = createTempRoot('harness-monitor-workspace-')
+    const stateRoot = resolve(workspaceRoot, '.harness', 'state')
+    const rootSessionId = 'workspace-a'
+    const sessionStatePath = resolve(stateRoot, 'monitor-sessions', `${encodeURIComponent(rootSessionId)}.json`)
+    const boardRuntimeStatePath = resolve(stateRoot, 'monitor-board', 'runtime.json')
+    const cleanupMonitorBoardProcess = vi.fn().mockResolvedValue(undefined)
+
+    mkdirSync(resolve(stateRoot, 'monitor-board'), { recursive: true })
+    writeFileSync(
+      boardRuntimeStatePath,
+      `${JSON.stringify({ pid: 43210, activeRootSessionIds: [rootSessionId, 'workspace-b'] })}\n`,
+      'utf8',
+    )
+
+    const result = await cleanupMonitorSessionForWorkspace({
+      workspaceRoot,
+      stateRoot,
+      rootSessionId,
+      cleanupMonitorBoardProcess,
+    })
+
+    expect(result).toMatchObject({
+      boardAction: 'released',
+      rootSessionId,
+      sessionStateRemoved: false,
+      remainingActiveRootSessionIds: ['workspace-b'],
+    })
+    expect(existsSync(sessionStatePath)).toBe(false)
+    expect(cleanupMonitorBoardProcess).not.toHaveBeenCalled()
+    expect(JSON.parse(readFileSync(boardRuntimeStatePath, 'utf8'))).toMatchObject({
+      activeRootSessionIds: ['workspace-b'],
+      pid: 43210,
+    })
+  })
+
+  it('runs monitor cleanup after run-session startup failures', async () => {
+    const stateRoot = createTempRoot('harness-run-session-state-')
+    const runDirectory = createTempRoot('harness-run-session-failure-')
+    const cleanupMonitorSession = vi.fn().mockResolvedValue(undefined)
+    const session = createRunSession({
+      workspaceRoot: '/workspace/root',
+      stateRoot,
+      runDirectory,
+      input: { goal: 'prepare failure goal' },
+      adapter: noopAdapter,
+      roleRegistry: new Map(),
+      modelConfig,
+      failurePolicyConfig,
+      teamCompositionRegistry,
+      prepareInput: async () => {
+        throw new Error('prepare failed')
+      },
+      cleanupMonitorSession,
+    })
+
+    await expect(session.waitForCompletion()).rejects.toThrow('prepare failed')
+    expect(cleanupMonitorSession).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceRoot: '/workspace/root',
+      stateRoot,
+    }))
+  })
+
+  it('passes the captured root session id into monitor cleanup even if COCO_SESSION_ID changes', async () => {
+    const stateRoot = createTempRoot('harness-run-session-state-')
+    const runDirectory = createTempRoot('harness-run-session-failure-')
+    const cleanupMonitorSession = vi.fn().mockResolvedValue(undefined)
+
+    process.env.COCO_SESSION_ID = 'coco-live-A'
+
+    const session = createRunSession({
+      workspaceRoot: '/workspace/root',
+      stateRoot,
+      runDirectory,
+      input: { goal: 'prepare failure goal' },
+      adapter: noopAdapter,
+      roleRegistry: new Map(),
+      modelConfig,
+      failurePolicyConfig,
+      teamCompositionRegistry,
+      prepareInput: async () => {
+        process.env.COCO_SESSION_ID = 'coco-live-B'
+        throw new Error('prepare failed')
+      },
+      cleanupMonitorSession,
+    })
+
+    await expect(session.waitForCompletion()).rejects.toThrow('prepare failed')
+    expect(cleanupMonitorSession).toHaveBeenCalledWith({
+      workspaceRoot: '/workspace/root',
+      stateRoot,
+      rootSessionId: 'coco-live-A',
+    })
   })
 })

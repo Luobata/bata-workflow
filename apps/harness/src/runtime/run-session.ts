@@ -1,5 +1,7 @@
+import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { basename, resolve } from 'node:path'
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { basename, dirname, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import type { GoalInput, RoleDefinition, RunReport, TeamSlotTmuxBinding } from '../domain/types.js'
@@ -26,6 +28,22 @@ export type RunSession = {
 }
 
 const RUN_SESSION_START_TIMEOUT_MS = 5000
+
+const DEFAULT_MONITOR_STATE_ROOT_RELATIVE_PATH = ['.harness', 'state'] as const
+
+type MonitorBoardRuntimeState = {
+  pid?: number
+  activeRootSessionIds?: unknown
+}
+
+export type MonitorSessionCleanupResult = {
+  rootSessionId: string
+  sessionStatePath: string
+  boardRuntimeStatePath: string
+  sessionStateRemoved: boolean
+  boardAction: 'none' | 'released' | 'stopped' | 'stale-state-cleared'
+  remainingActiveRootSessionIds: string[]
+}
 
 type TmuxManagerModule = {
   checkTmuxHealth(): Promise<{ available: boolean }>
@@ -94,6 +112,152 @@ function buildSanitizedTmuxName(name: string, sanitizeName: (value: string) => s
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function deriveWorkspaceHashSessionId(workspaceRoot: string): string {
+  const hash = createHash('sha1').update(workspaceRoot).digest('hex').slice(0, 12)
+  return `workspace-${hash}`
+}
+
+function resolveLiveCocoSessionId(): string | null {
+  const sessionId = process.env.COCO_SESSION_ID?.trim()
+  return sessionId ? sessionId : null
+}
+
+function getRootSessionIdForWorkspace(workspaceRoot: string): string {
+  return resolveLiveCocoSessionId() ?? deriveWorkspaceHashSessionId(resolve(workspaceRoot))
+}
+
+function getMonitorSessionStatePath(stateRoot: string, rootSessionId: string): string {
+  return resolve(stateRoot, 'monitor-sessions', `${encodeURIComponent(rootSessionId)}.json`)
+}
+
+function getMonitorBoardRuntimeStatePath(stateRoot: string): string {
+  return resolve(stateRoot, 'monitor-board', 'runtime.json')
+}
+
+function normalizeActiveRootSessionIds(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  return [...new Set(value.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0))]
+}
+
+async function readMonitorBoardRuntimeState(runtimeStatePath: string): Promise<MonitorBoardRuntimeState | null> {
+  try {
+    const raw = await readFile(runtimeStatePath, 'utf8')
+    const parsed = JSON.parse(raw) as MonitorBoardRuntimeState
+    return parsed && typeof parsed === 'object' ? parsed : null
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+      return null
+    }
+
+    if (error instanceof SyntaxError) {
+      return null
+    }
+
+    throw error
+  }
+}
+
+async function writeJsonFileAtomic(filePath: string, value: unknown): Promise<void> {
+  await mkdir(dirname(filePath), { recursive: true })
+  const tempFilePath = `${filePath}.${process.pid}.${Date.now()}.tmp`
+  await writeFile(tempFilePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8')
+  await rename(tempFilePath, filePath)
+}
+
+async function defaultCleanupMonitorBoardProcess(pid: number | null): Promise<void> {
+  if (pid == null || !Number.isInteger(pid) || pid <= 0) {
+    return
+  }
+
+  if (process.platform !== 'win32') {
+    try {
+      process.kill(-pid, 'SIGTERM')
+      return
+    } catch {}
+  }
+
+  try {
+    process.kill(pid, 'SIGTERM')
+  } catch {}
+}
+
+export async function cleanupMonitorSessionForWorkspace(params: {
+  workspaceRoot: string
+  stateRoot?: string
+  rootSessionId?: string
+  cleanupMonitorBoardProcess?: (pid: number | null) => Promise<void>
+}): Promise<MonitorSessionCleanupResult> {
+  const workspaceRoot = resolve(params.workspaceRoot)
+  const rootSessionId = params.rootSessionId ?? getRootSessionIdForWorkspace(workspaceRoot)
+  const stateRoot = resolve(params.stateRoot ?? resolve(workspaceRoot, ...DEFAULT_MONITOR_STATE_ROOT_RELATIVE_PATH))
+  const sessionStatePath = getMonitorSessionStatePath(stateRoot, rootSessionId)
+  const boardRuntimeStatePath = getMonitorBoardRuntimeStatePath(stateRoot)
+  const cleanupMonitorBoardProcess = params.cleanupMonitorBoardProcess ?? defaultCleanupMonitorBoardProcess
+  const sessionStateExists = existsSync(sessionStatePath)
+
+  if (sessionStateExists) {
+    await rm(sessionStatePath, { force: true })
+  }
+
+  const runtimeState = await readMonitorBoardRuntimeState(boardRuntimeStatePath)
+  if (!runtimeState) {
+    return {
+      rootSessionId,
+      sessionStatePath,
+      boardRuntimeStatePath,
+      sessionStateRemoved: sessionStateExists,
+      boardAction: 'none',
+      remainingActiveRootSessionIds: [],
+    }
+  }
+
+  const trackedRootSessionIds = normalizeActiveRootSessionIds(runtimeState.activeRootSessionIds)
+  if (trackedRootSessionIds.length === 0) {
+    return {
+      rootSessionId,
+      sessionStatePath,
+      boardRuntimeStatePath,
+      sessionStateRemoved: sessionStateExists,
+      boardAction: 'none',
+      remainingActiveRootSessionIds: [],
+    }
+  }
+
+  const remainingActiveRootSessionIds = trackedRootSessionIds.filter((sessionId) => sessionId !== rootSessionId)
+
+  if (trackedRootSessionIds.length > 0 && remainingActiveRootSessionIds.length > 0) {
+    await writeJsonFileAtomic(boardRuntimeStatePath, {
+      ...runtimeState,
+      activeRootSessionIds: remainingActiveRootSessionIds,
+    })
+
+    return {
+      rootSessionId,
+      sessionStatePath,
+      boardRuntimeStatePath,
+      sessionStateRemoved: sessionStateExists,
+      boardAction: 'released',
+      remainingActiveRootSessionIds,
+    }
+  }
+
+  const pid = typeof runtimeState.pid === 'number' && Number.isInteger(runtimeState.pid) ? runtimeState.pid : null
+  await cleanupMonitorBoardProcess(pid)
+  await rm(boardRuntimeStatePath, { force: true })
+
+  return {
+    rootSessionId,
+    sessionStatePath,
+    boardRuntimeStatePath,
+    sessionStateRemoved: sessionStateExists,
+    boardAction: pid ? 'stopped' : 'stale-state-cleared',
+    remainingActiveRootSessionIds: [],
+  }
 }
 
 export async function prepareTeamRunSpecWithTmuxBindings(params: {
@@ -183,6 +347,7 @@ export function createRunSession(params: {
   teamCompositionRegistry: TeamCompositionRegistry
   maxConcurrency?: number
   prepareInput?: (params: { workspaceRoot: string; runDirectory: string; input: GoalInput }) => Promise<GoalInput>
+  cleanupMonitorSession?: (params: { workspaceRoot: string; stateRoot: string; rootSessionId: string }) => Promise<unknown>
 }): RunSession {
   const {
     workspaceRoot,
@@ -195,7 +360,8 @@ export function createRunSession(params: {
     failurePolicyConfig,
     teamCompositionRegistry,
     maxConcurrency = 2,
-    prepareInput = prepareTeamRunSpecWithTmuxBindings
+    prepareInput = prepareTeamRunSpecWithTmuxBindings,
+    cleanupMonitorSession = ({ workspaceRoot, stateRoot, rootSessionId }) => cleanupMonitorSessionForWorkspace({ workspaceRoot, stateRoot, rootSessionId })
   } = params
 
   let status: RunSessionStatus = 'idle'
@@ -204,6 +370,24 @@ export function createRunSession(params: {
   let runPromise: Promise<RunReport> | null = null
   let startupPromise: Promise<void> | null = null
   const reportPath = getRunReportPath(runDirectory)
+  const rootSessionId = getRootSessionIdForWorkspace(workspaceRoot)
+  let cleanupPromise: Promise<void> | null = null
+  let startupTimedOut = false
+
+  const runMonitorCleanup = async (): Promise<void> => {
+    if (!cleanupPromise) {
+      cleanupPromise = (async () => {
+        try {
+          await cleanupMonitorSession({ workspaceRoot, stateRoot, rootSessionId })
+        } catch (cleanupError) {
+          const message = cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
+          process.stderr.write(`[harness] monitor cleanup skipped: ${message}\n`)
+        }
+      })()
+    }
+
+    await cleanupPromise
+  }
 
   const ensureStarted = (): Promise<RunReport> => {
     if (runPromise) {
@@ -214,6 +398,10 @@ export function createRunSession(params: {
     startupPromise = new Promise<void>((resolve, reject) => {
       runPromise = prepareInput({ workspaceRoot, runDirectory, input })
       .then((preparedInput) => {
+        if (startupTimedOut) {
+          throw error ?? new Error(`run session 启动超时: ${runDirectory}`)
+        }
+
         resolve()
         return runGoal({
           workspaceRoot,
@@ -239,7 +427,11 @@ export function createRunSession(params: {
         reject(error)
         throw error
       })
+      .finally(async () => {
+        await runMonitorCleanup()
+      })
     })
+    void startupPromise.catch(() => undefined)
 
     return runPromise!
   }
@@ -260,7 +452,11 @@ export function createRunSession(params: {
         }
 
         if (Date.now() - startedAt >= RUN_SESSION_START_TIMEOUT_MS) {
-          throw new Error(`run session 启动超时: ${runDirectory}`)
+          startupTimedOut = true
+          error = error ?? new Error(`run session 启动超时: ${runDirectory}`)
+          status = 'failed'
+          await runMonitorCleanup()
+          throw error
         }
 
         await Promise.race([

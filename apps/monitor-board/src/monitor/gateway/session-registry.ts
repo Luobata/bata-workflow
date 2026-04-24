@@ -1,11 +1,11 @@
-import type { BoardEvent } from '@monitor/protocol';
+import type { BoardEvent } from '../protocol';
 import {
   createInitialBoardState,
   reduceBoardEvent,
   selectTopBarStats,
   type ActorNode,
   type BoardState,
-} from '@monitor/runtime-store';
+} from '../runtime-store';
 
 export interface SessionSnapshotState {
   actors: ActorNode[];

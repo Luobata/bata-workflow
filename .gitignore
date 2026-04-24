@@ -134,3 +134,8 @@ dist-storybook/
 **/tests/**/*.d.ts
 vitest.config.js
 vitest.config.d.ts
+
+# Monitor local visual debug artifacts
+.tmp-monitor-board-*.png
+apps/monitor-board/.tmp-*.png
+apps/monitor-board/tmp-*.png

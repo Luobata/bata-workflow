@@ -34,6 +34,12 @@ export interface TaskStoreSnapshot {
   artifactsByTaskId?: Record<string, TaskArtifacts>
 }
 
+export interface MonitorRunMetadata {
+  rootSessionId: string
+  monitorSessionId: string
+  workspaceRoot: string
+}
+
 export interface TaskQueueSnapshot {
   goal: string
   createdAt: string
@@ -50,6 +56,7 @@ export interface TaskQueueSnapshot {
   failedTaskIds: string[]
   events: RuntimeEvent[]
   mailbox: MailboxMessage[]
+  monitor?: MonitorRunMetadata | null
 }
 
 export interface PersistentRunState {
