@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
 import { BoardEventSchema, createBoardEventId, type ActorType, type BoardEvent, type BoardStatus, type Severity } from '../protocol';
@@ -183,7 +183,14 @@ const COCO_SESSION_STALE_AFTER_MS = (() => {
   const parsed = Number.parseInt(process.env.COCO_SESSION_STALE_AFTER_MS ?? '', 10);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : 60_000;
 })();
-const DISCONNECTED_SESSION_CLEANUP_AFTER_MS = 60_000;
+const DISCONNECTED_SESSION_CLEANUP_AFTER_MS = (() => {
+  const parsed = Number.parseInt(process.env.MONITOR_DISCONNECTED_SESSION_CLEANUP_AFTER_MS ?? '', 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  return parsed;
+})();
 
 type RunCandidate = {
   runDirectory: string;
@@ -198,6 +205,30 @@ const LEAD_ACTOR_PREFIX = 'lead';
 const MONITOR_BOARD_RUNTIME_STATE_PATH = ['monitor-board', 'runtime.json'] as const;
 const MONITOR_SESSION_DIRECTORY_PATH = ['monitor-sessions'] as const;
 const DEFAULT_COCO_SESSIONS_ENV = 'COCO_SESSIONS_ROOT';
+const MONITOR_BOARD_LOG_FILE_NAME = 'monitor-board.log';
+
+const writeMonitorBoardLog = async (
+  stateRoot: string,
+  event: string,
+  data: Record<string, unknown> = {},
+): Promise<void> => {
+  const logDirectoryPath = resolve(stateRoot, 'monitor-logs');
+  const logFilePath = resolve(logDirectoryPath, MONITOR_BOARD_LOG_FILE_NAME);
+  const payload = {
+    ts: new Date().toISOString(),
+    pid: process.pid,
+    source: 'monitor-board.gateway',
+    event,
+    data,
+  };
+
+  try {
+    await mkdir(logDirectoryPath, { recursive: true });
+    await appendFile(logFilePath, `${JSON.stringify(payload)}\n`, 'utf8');
+  } catch {
+    // Logging is best-effort and should never break live snapshot building.
+  }
+};
 
 const readJsonFile = async <T>(filePath: string): Promise<T | null> => {
   try {
@@ -403,6 +434,10 @@ const getSnapshotDisconnectedTimestamp = (snapshot: SessionSnapshot): string => 
 };
 
 const shouldCleanupDisconnectedSession = (sessionState: MonitorSessionStateLike | null, nowMs: number): boolean => {
+  if (!Number.isFinite(DISCONNECTED_SESSION_CLEANUP_AFTER_MS)) {
+    return false;
+  }
+
   if (sessionState?.status !== 'disconnected') {
     return false;
   }
@@ -420,7 +455,10 @@ const persistDisconnectedSessionState = async (params: {
 }): Promise<MonitorSessionStateLike> => {
   const { sessionStatePath, sessionState, rootSessionId, disconnectedAt, nowMs } = params;
   const nextDisconnectedAt = sessionState?.disconnectedAt?.trim() || disconnectedAt;
-  const nextCleanupAfter = sessionState?.cleanupAfter?.trim() || new Date(nowMs + DISCONNECTED_SESSION_CLEANUP_AFTER_MS).toISOString();
+  const nextCleanupAfter = sessionState?.cleanupAfter?.trim()
+    || (Number.isFinite(DISCONNECTED_SESSION_CLEANUP_AFTER_MS)
+      ? new Date(nowMs + DISCONNECTED_SESSION_CLEANUP_AFTER_MS).toISOString()
+      : undefined);
   const nextState: MonitorSessionStateLike = {
     ...sessionState,
     rootSessionId: sessionState?.rootSessionId ?? rootSessionId,
@@ -437,7 +475,7 @@ const persistDisconnectedSessionState = async (params: {
     sessionState?.status === nextState.status
     && sessionState?.updatedAt === nextState.updatedAt
     && sessionState?.disconnectedAt === nextState.disconnectedAt
-    && sessionState?.cleanupAfter === nextState.cleanupAfter
+    && (sessionState?.cleanupAfter ?? undefined) === nextState.cleanupAfter
   ) {
     return nextState;
   }
@@ -596,11 +634,12 @@ const findLatestCocoSessionCandidate = async (params: {
 };
 
 const buildCocoSnapshot = async (params: {
+  stateRoot: string;
   rootSessionId: string;
   sessionState: MonitorSessionStateLike | null;
   cocoSessionsRoot?: string;
 }): Promise<SessionSnapshot | null> => {
-  const { rootSessionId, sessionState, cocoSessionsRoot } = params;
+  const { stateRoot, rootSessionId, sessionState, cocoSessionsRoot } = params;
   const candidate = await findLatestCocoSessionCandidate({
     cocoSessionsRoot: resolveCocoSessionsRoot(cocoSessionsRoot),
     sessionState,
@@ -628,6 +667,7 @@ const buildCocoSnapshot = async (params: {
   const rawAgentToBoardActor = new Map<string, string>();
   const boardActorInitialized = new Set<string>();
   const activeToolCalls = new Map<string, CocoToolCallState>();
+  const activeAgentIds = new Set<string>();
   let sortOrder = 0;
 
   const nextSortOrder = () => {
@@ -696,6 +736,7 @@ const buildCocoSnapshot = async (params: {
     const parentActorId = actorParentById.get(actorId) ?? null;
 
     if (event.agent_start) {
+      activeAgentIds.add(actorId);
       const action = extractPromptSummary(event.agent_start.input) ?? `${actorNameById.get(actorId) ?? event.agent_name ?? 'Agent'} active`;
       if (actorId === leadActorId) {
         pushDraft({
@@ -828,6 +869,7 @@ const buildCocoSnapshot = async (params: {
     }
 
     if (event.agent_end) {
+      activeAgentIds.delete(actorId);
       const summary = extractAgentEndSummary(event.agent_end) ?? `${actorNameById.get(actorId) ?? 'Agent'} completed`;
       pushDraft({
         sessionId,
@@ -925,7 +967,7 @@ const buildCocoSnapshot = async (params: {
       actorType,
       eventType: 'action.summary',
       action,
-      status: 'active',
+      status: 'done',
       timestamp: endTimestamp,
       model: modelName,
       toolName: null,
@@ -984,8 +1026,41 @@ const buildCocoSnapshot = async (params: {
     }),
   ].filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
 
-  if (latestActivityMs.length > 0 && Math.max(...latestActivityMs) <= Date.now() - COCO_SESSION_STALE_AFTER_MS) {
-    const disconnectedAt = new Date(Math.max(...latestActivityMs)).toISOString();
+  const hasActiveToolCalls = activeToolCalls.size > 0;
+  const hasActiveAgents = activeAgentIds.size > 0;
+  if (hasActiveToolCalls || hasActiveAgents) {
+    await writeMonitorBoardLog(stateRoot, 'coco.snapshot.keep_active_execution', {
+      rootSessionId,
+      activeToolCallCount: activeToolCalls.size,
+      activeAgentCount: activeAgentIds.size,
+      cocoSessionId: sessionId,
+    });
+    return snapshot;
+  }
+
+  const latestActivityAtMs = latestActivityMs.length > 0 ? Math.max(...latestActivityMs) : null;
+
+  if (latestActivityAtMs !== null && latestActivityAtMs > Date.now() - COCO_SESSION_STALE_AFTER_MS) {
+    const waitingAt = new Date(latestActivityAtMs).toISOString();
+    await writeMonitorBoardLog(stateRoot, 'coco.snapshot.waiting_for_user_input', {
+      rootSessionId,
+      cocoSessionId: sessionId,
+      waitingAt,
+    });
+    return markSnapshotWaitingForUserInput(snapshot, {
+      timestamp: waitingAt,
+      reason: 'waiting for user input',
+    });
+  }
+
+  if (latestActivityAtMs !== null && latestActivityAtMs <= Date.now() - COCO_SESSION_STALE_AFTER_MS) {
+    const disconnectedAt = new Date(latestActivityAtMs).toISOString();
+    await writeMonitorBoardLog(stateRoot, 'coco.snapshot.mark_disconnected', {
+      rootSessionId,
+      cocoSessionId: sessionId,
+      latestActivityAt: disconnectedAt,
+      staleAfterMs: COCO_SESSION_STALE_AFTER_MS,
+    });
     return markSnapshotDisconnected(snapshot, {
       timestamp: disconnectedAt,
       reason: 'live session disconnected',
@@ -993,6 +1068,80 @@ const buildCocoSnapshot = async (params: {
   }
 
   return snapshot;
+};
+
+const markSnapshotWaitingForUserInput = (
+  snapshot: SessionSnapshot,
+  params: { timestamp: string; reason: string },
+): SessionSnapshot => {
+  if (snapshot.state.actors.some((actor) => actor.status === 'disconnected')) {
+    return snapshot;
+  }
+
+  const leadActor = snapshot.state.actors.find((actor) => actor.actorType === 'lead') ?? snapshot.state.actors[0];
+  if (!leadActor) {
+    return snapshot;
+  }
+
+  const lastEvent = snapshot.state.timeline[snapshot.state.timeline.length - 1];
+  if (lastEvent?.status === 'idle' && lastEvent?.action === params.reason) {
+    return snapshot;
+  }
+
+  const sequence = snapshot.state.timeline.length + 1;
+  const waitingEvent: BoardEvent = BoardEventSchema.parse({
+    id: createBoardEventId('session.updated', leadActor.id, sequence),
+    eventType: 'session.updated',
+    sessionId: lastEvent?.sessionId ?? leadActor.id,
+    rootSessionId: lastEvent?.rootSessionId ?? leadActor.id,
+    monitorSessionId: snapshot.monitorSessionId,
+    actorId: leadActor.id,
+    parentActorId: null,
+    actorType: 'lead',
+    action: params.reason,
+    status: 'idle',
+    timestamp: params.timestamp,
+    sequence,
+    model: leadActor.model,
+    toolName: null,
+    tokenIn: 0,
+    tokenOut: 0,
+    elapsedMs: leadActor.elapsedMs,
+    costEstimate: 0,
+    summary: params.reason,
+    metadata: {
+      displayName: 'Lead Agent',
+      currentAction: params.reason,
+      timelineLabel: params.reason,
+    },
+    tags: ['coco-live', 'awaiting-user-input'],
+    severity: 'info',
+    monitorEnabled: true,
+    monitorInherited: false,
+    monitorOwnerActorId: leadActor.id,
+  });
+
+  return {
+    ...snapshot,
+    stats: {
+      ...snapshot.stats,
+      activeCount: 0,
+    },
+    timelineCount: sequence,
+    state: {
+      actors: snapshot.state.actors.map((actor) =>
+        actor.id === leadActor.id
+          ? {
+              ...actor,
+              status: 'idle',
+              lastEventAt: params.timestamp,
+              lastEventSequence: sequence,
+            }
+          : actor,
+      ),
+      timeline: [...snapshot.state.timeline, waitingEvent],
+    },
+  };
 };
 
 const buildShellSnapshot = (params: {
@@ -1377,6 +1526,7 @@ export const buildHarnessSnapshots = async (
       const boundCocoSessionId = sessionState?.cocoSessionId?.trim();
       if (boundCocoSessionId) {
         const preferredCocoSnapshot = await buildCocoSnapshot({
+          stateRoot,
           rootSessionId,
           sessionState,
           cocoSessionsRoot: options.cocoSessionsRoot,
@@ -1384,6 +1534,10 @@ export const buildHarnessSnapshots = async (
         if (preferredCocoSnapshot) {
           if (isDisconnectedSnapshot(preferredCocoSnapshot)) {
             if (shouldCleanupDisconnectedSession(sessionState, nowMs)) {
+              await writeMonitorBoardLog(stateRoot, 'lease.release_disconnected_session', {
+                rootSessionId,
+                reason: 'bound_coco_snapshot_disconnected_cleanup_after',
+              });
               await rm(sessionStatePath, { force: true });
               return { rootSessionId, snapshot: null, releaseLease: true };
             }
@@ -1409,6 +1563,10 @@ export const buildHarnessSnapshots = async (
 
         if (!boundSession) {
           if (shouldCleanupDisconnectedSession(sessionState, nowMs)) {
+            await writeMonitorBoardLog(stateRoot, 'lease.release_disconnected_session', {
+              rootSessionId,
+              reason: 'bound_coco_session_missing_cleanup_after',
+            });
             await rm(sessionStatePath, { force: true });
             return { rootSessionId, snapshot: null, releaseLease: true };
           }
@@ -1430,6 +1588,10 @@ export const buildHarnessSnapshots = async (
 
         if (sessionState?.status === 'disconnected') {
           if (shouldCleanupDisconnectedSession(sessionState, nowMs)) {
+            await writeMonitorBoardLog(stateRoot, 'lease.release_disconnected_session', {
+              rootSessionId,
+              reason: 'bound_coco_session_shell_cleanup_after',
+            });
             await rm(sessionStatePath, { force: true });
             return { rootSessionId, snapshot: null, releaseLease: true };
           }
@@ -1449,6 +1611,10 @@ export const buildHarnessSnapshots = async (
       }
 
       if (shouldCleanupDisconnectedSession(sessionState, nowMs)) {
+        await writeMonitorBoardLog(stateRoot, 'lease.release_disconnected_session', {
+          rootSessionId,
+          reason: 'run_snapshot_cleanup_after',
+        });
         await rm(sessionStatePath, { force: true });
         return { rootSessionId, snapshot: null, releaseLease: true };
       }
@@ -1472,6 +1638,11 @@ export const buildHarnessSnapshots = async (
     .map((result) => result.rootSessionId);
 
   if (releasedRootSessionIds.length > 0 && runtimeState) {
+    await writeMonitorBoardLog(stateRoot, 'lease.release_runtime_state', {
+      releasedRootSessionIds,
+      before: activeRootSessionIds,
+      after: activeRootSessionIds.filter((rootSessionId) => !releasedRootSessionIds.includes(rootSessionId)),
+    });
     await writeJsonFileAtomic(resolve(stateRoot, ...MONITOR_BOARD_RUNTIME_STATE_PATH), {
       ...runtimeState,
       activeRootSessionIds: activeRootSessionIds.filter((rootSessionId) => !releasedRootSessionIds.includes(rootSessionId)),

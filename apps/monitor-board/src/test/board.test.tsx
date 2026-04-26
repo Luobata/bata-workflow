@@ -424,9 +424,17 @@ describe('App', () => {
     expect(within(activeTarget).getByText('UI Worker')).toBeInTheDocument();
     expect(within(activeTarget).getByText('Wiring summary and metadata variants')).toBeInTheDocument();
     expect(within(timelineFocusLock).getByText('LOG LOCK · UI WORKER')).toBeInTheDocument();
-    expect(within(timelineFocusLock).getByText('Subagent · BLOCKED · WRAPPING · 78%')).toBeInTheDocument();
+    expect(within(timelineFocusLock).getByText('Subagent · BLOCKED · EXECUTION · 63% · lead 1 · subagent 1 · worker 1')).toBeInTheDocument();
     expect(screen.getByText('wired summary and metadata panels')).toBeInTheDocument();
     expect(screen.queryByText('opened Task 8 board shell')).not.toBeInTheDocument();
+  });
+
+  it('formats timeline timestamps using configured timezone from URL', () => {
+    window.history.replaceState({}, '', '/?timeZone=Asia%2FShanghai');
+
+    render(<App initialSnapshot={createSessionSnapshot()} connectSocket={() => { throw new Error('offline'); }} />);
+
+    expect(screen.getByText('[20:01]')).toBeInTheDocument();
   });
 
   it('switches the operations deck between timeline and run tree tabs', () => {
@@ -446,10 +454,10 @@ describe('App', () => {
   it('shows estimated overall and per-agent progress across the board', () => {
     render(<App initialSnapshot={createSessionSnapshot()} connectSocket={() => { throw new Error('offline'); }} />);
 
-    expect(screen.getByText('Quest 73%')).toBeInTheDocument();
-    expect(screen.getByText('Progress 100%')).toBeInTheDocument();
-    expect(screen.getByText('Progress 78%')).toBeInTheDocument();
-    expect(screen.getByText('Progress 41%')).toBeInTheDocument();
+    expect(screen.getByText('Quest 62%')).toBeInTheDocument();
+    expect(screen.getByText('Progress 82%')).toBeInTheDocument();
+    expect(screen.getByText('Progress 63%')).toBeInTheDocument();
+    expect(screen.getByText('Progress 42%')).toBeInTheDocument();
   });
 
   it('switches to a progress board tab with quest stage and per-agent stages', () => {
@@ -462,9 +470,14 @@ describe('App', () => {
     expect(screen.getByRole('heading', { name: 'PROGRESS BOARD' })).toBeInTheDocument();
     expect(screen.getByText('Quest Stage')).toBeInTheDocument();
     expect(screen.getAllByText('Execution').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Completed').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Wrapping').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Scouting').length).toBeGreaterThan(0);
+  });
+
+  it('does not render EVT sequence labels in timeline rows', () => {
+    render(<App initialSnapshot={createSessionSnapshot()} connectSocket={() => { throw new Error('offline'); }} />);
+
+    expect(screen.queryByText(/EVT-\d+/)).not.toBeInTheDocument();
   });
 
   it('shows a neutral waiting shell instead of demo data when no explicit seed or live target is available and the gateway socket cannot connect', () => {
@@ -544,6 +557,35 @@ describe('App', () => {
     await waitFor(() => {
       expect(screen.getByText('monitor:gateway-live')).toBeInTheDocument();
     });
+  });
+
+  it('surfaces socket failures and retries until live snapshots reconnect', async () => {
+    const liveSnapshot = createSessionSnapshot('monitor:gateway-retry');
+    const close = vi.fn();
+    const connectSocket = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        throw new Error('dial failed');
+      })
+      .mockImplementation((_url, onMessage) => {
+        onMessage(liveSnapshot);
+        return {
+          close,
+        } as unknown as WebSocket;
+      });
+
+    render(<App targetMonitorSessionId="monitor:gateway-retry" connectSocket={connectSocket} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('live gateway unavailable · dial failed')).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      expect(screen.getAllByText('Lead synced gateway contract').length).toBeGreaterThan(0);
+    }, { timeout: 3_000 });
+
+    expect(screen.queryByText('live gateway unavailable · dial failed')).not.toBeInTheDocument();
+    expect(connectSocket).toHaveBeenCalledTimes(2);
   });
 
   it('prefers useful timeline summaries over model-name labels for model response events', () => {

@@ -361,7 +361,7 @@ describe('buildHarnessSnapshots', () => {
       expect.objectContaining({
         monitorSessionId: 'monitor:workspace-coco',
         actorCount: 1,
-        timelineCount: 4,
+        timelineCount: 5,
         stats: expect.objectContaining({
           totalTokens: 366,
         }),
@@ -386,6 +386,11 @@ describe('buildHarnessSnapshots', () => {
               eventType: 'action.summary',
               tokenIn: 321,
               tokenOut: 45,
+            }),
+            expect.objectContaining({
+              eventType: 'session.updated',
+              status: 'idle',
+              summary: 'waiting for user input',
             }),
           ]),
         }),
@@ -627,12 +632,13 @@ describe('buildHarnessSnapshots', () => {
     expect(liveSnapshots).toEqual([
       expect.objectContaining({
         monitorSessionId: `monitor:${rootSessionId}`,
-        timelineCount: 4,
+        timelineCount: 5,
         state: expect.objectContaining({
           timeline: expect.arrayContaining([
             expect.objectContaining({ eventType: 'tool.called', toolName: 'Skill', sessionId: cocoSessionId }),
             expect.objectContaining({ eventType: 'tool.finished', toolName: 'Skill', sessionId: cocoSessionId }),
             expect.objectContaining({ eventType: 'action.summary', tokenIn: 321, tokenOut: 45, sessionId: cocoSessionId }),
+            expect.objectContaining({ eventType: 'session.updated', status: 'idle', summary: 'waiting for user input' }),
           ]),
         }),
       }),
@@ -850,6 +856,165 @@ describe('buildHarnessSnapshots', () => {
     expect(snapshots[0]?.state.timeline.some((event) => event.summary === 'live session disconnected')).toBe(false);
   });
 
+  it('marks a completed single-turn Coco session as waiting for user input before stale cutoff', async () => {
+    const stateRoot = createTempStateRoot();
+    const cocoSessionsRoot = resolve(createTempStateRoot(), 'coco-sessions');
+    const rootSessionId = 'coco-live-waiting';
+    const cocoSessionId = 'coco-live-waiting';
+    const now = Date.now();
+    const createdAt = new Date(now - 45_000).toISOString();
+    const updatedAt = new Date(now - 8_000).toISOString();
+    const agentStartAt = new Date(now - 20_000).toISOString();
+    const agentEndAt = new Date(now - 9_000).toISOString();
+
+    writeJson(resolve(stateRoot, 'monitor-board', 'runtime.json'), {
+      activeRootSessionIds: [rootSessionId],
+    });
+    writeJson(resolve(stateRoot, 'monitor-sessions', `${encodeURIComponent(rootSessionId)}.json`), {
+      rootSessionId,
+      monitorSessionId: `monitor:${rootSessionId}`,
+      ownerActorId: 'lead',
+      status: 'active',
+      cocoSessionId,
+      workspaceRoot: '/tmp/workspace-coco-waiting',
+      createdAt,
+      updatedAt: createdAt,
+    });
+
+    writeJson(resolve(cocoSessionsRoot, cocoSessionId, 'session.json'), {
+      id: cocoSessionId,
+      created_at: createdAt,
+      updated_at: updatedAt,
+      metadata: {
+        cwd: '/tmp/workspace-coco-waiting',
+        model_name: 'gpt-5.4',
+        title: 'Completed single-turn response',
+      },
+    });
+    writeJsonLines(resolve(cocoSessionsRoot, cocoSessionId, 'events.jsonl'), [
+      {
+        id: 'event-agent-start-waiting',
+        session_id: cocoSessionId,
+        agent_id: 'agent-lead',
+        agent_name: 'TraeCli',
+        parent_tool_call_id: '',
+        created_at: agentStartAt,
+        agent_start: {
+          input: [
+            {
+              role: 'user',
+              content: 'Summarize this status.',
+              extra: {
+                is_original_user_input: true,
+              },
+            },
+          ],
+        },
+      },
+      {
+        id: 'event-agent-end-waiting',
+        session_id: cocoSessionId,
+        agent_id: 'agent-lead',
+        agent_name: 'TraeCli',
+        parent_tool_call_id: '',
+        created_at: agentEndAt,
+        agent_end: {
+          output: {
+            role: 'assistant',
+            content: 'Done. Waiting for your next instruction.',
+          },
+        },
+      },
+    ]);
+    writeJsonLines(resolve(cocoSessionsRoot, cocoSessionId, 'traces.jsonl'), []);
+
+    const snapshots = await buildHarnessSnapshots(stateRoot, { cocoSessionsRoot });
+
+    expect(snapshots).toEqual([
+      expect.objectContaining({
+        monitorSessionId: `monitor:${rootSessionId}`,
+        state: expect.objectContaining({
+          actors: [expect.objectContaining({ status: 'idle' })],
+          timeline: expect.arrayContaining([
+            expect.objectContaining({ eventType: 'actor.completed', status: 'done' }),
+            expect.objectContaining({ eventType: 'session.updated', status: 'idle', summary: 'waiting for user input' }),
+          ]),
+        }),
+      }),
+    ]);
+    expect(snapshots[0]?.state.timeline.some((event) => event.summary === 'live session disconnected')).toBe(false);
+  });
+
+  it('keeps the session active past stale cutoff when an agent is still running', async () => {
+    const stateRoot = createTempStateRoot();
+    const cocoSessionsRoot = resolve(createTempStateRoot(), 'coco-sessions');
+    const rootSessionId = 'coco-live-agent-running';
+    const cocoSessionId = 'coco-live-agent-running';
+    const staleNow = Date.now() - 120_000;
+    const staleCreatedAt = new Date(staleNow - 180_000).toISOString();
+    const staleUpdatedAt = new Date(staleNow - 90_000).toISOString();
+    const staleAgentStartAt = new Date(staleNow - 95_000).toISOString();
+
+    writeJson(resolve(stateRoot, 'monitor-board', 'runtime.json'), {
+      activeRootSessionIds: [rootSessionId],
+    });
+    writeJson(resolve(stateRoot, 'monitor-sessions', `${encodeURIComponent(rootSessionId)}.json`), {
+      rootSessionId,
+      monitorSessionId: `monitor:${rootSessionId}`,
+      ownerActorId: 'lead',
+      status: 'active',
+      cocoSessionId,
+      workspaceRoot: '/tmp/workspace-coco-agent-running',
+      createdAt: staleCreatedAt,
+      updatedAt: staleCreatedAt,
+    });
+
+    writeJson(resolve(cocoSessionsRoot, cocoSessionId, 'session.json'), {
+      id: cocoSessionId,
+      created_at: staleCreatedAt,
+      updated_at: staleUpdatedAt,
+      metadata: {
+        cwd: '/tmp/workspace-coco-agent-running',
+        model_name: 'gpt-5.4',
+        title: 'Agent still running',
+      },
+    });
+    writeJsonLines(resolve(cocoSessionsRoot, cocoSessionId, 'events.jsonl'), [
+      {
+        id: 'event-agent-start-running',
+        session_id: cocoSessionId,
+        agent_id: 'agent-lead',
+        agent_name: 'TraeCli',
+        parent_tool_call_id: '',
+        created_at: staleAgentStartAt,
+        agent_start: {
+          input: [
+            {
+              type: 'text',
+              text: 'Long-running execution still active',
+            },
+          ],
+        },
+      },
+    ]);
+    writeJsonLines(resolve(cocoSessionsRoot, cocoSessionId, 'traces.jsonl'), []);
+
+    const snapshots = await buildHarnessSnapshots(stateRoot, { cocoSessionsRoot });
+
+    expect(snapshots).toEqual([
+      expect.objectContaining({
+        monitorSessionId: `monitor:${rootSessionId}`,
+        state: expect.objectContaining({
+          actors: [expect.objectContaining({ status: 'active' })],
+          timeline: expect.arrayContaining([
+            expect.objectContaining({ eventType: 'action.started', status: 'active' }),
+          ]),
+        }),
+      }),
+    ]);
+    expect(snapshots[0]?.state.timeline.some((event) => event.summary === 'live session disconnected')).toBe(false);
+  });
+
   it('marks the session disconnected when the bound Coco session data is no longer available', async () => {
     const stateRoot = createTempStateRoot();
     const cocoSessionsRoot = resolve(createTempStateRoot(), 'coco-sessions');
@@ -883,7 +1048,7 @@ describe('buildHarnessSnapshots', () => {
     ]);
   });
 
-  it('keeps a disconnected session visible briefly before releasing its monitor lease after Coco closes', async () => {
+  it('keeps a disconnected session and lease until explicit session cleanup by default', async () => {
     vi.useFakeTimers();
     const now = new Date('2026-04-23T10:00:00.000Z');
     vi.setSystemTime(now);
@@ -933,6 +1098,17 @@ describe('buildHarnessSnapshots', () => {
           },
         },
       },
+      {
+        id: 'event-tool-result',
+        session_id: cocoSessionId,
+        agent_id: 'agent-lead',
+        agent_name: 'TraeCli',
+        parent_tool_call_id: '',
+        created_at: '2026-04-23T09:58:26.000Z',
+        tool_call_output: {
+          tool_call_id: 'tool-call-1',
+        },
+      },
     ]);
     writeJsonLines(resolve(cocoSessionsRoot, cocoSessionId, 'traces.jsonl'), []);
 
@@ -956,12 +1132,19 @@ describe('buildHarnessSnapshots', () => {
 
     vi.setSystemTime(new Date(now.getTime() + 61_000));
 
-    const cleanedSnapshots = await buildHarnessSnapshots(stateRoot, { cocoSessionsRoot });
+    const delayedSnapshots = await buildHarnessSnapshots(stateRoot, { cocoSessionsRoot });
 
-    expect(cleanedSnapshots).toEqual([]);
-    expect(existsSync(sessionStatePath)).toBe(false);
+    expect(delayedSnapshots).toEqual([
+      expect.objectContaining({
+        monitorSessionId: `monitor:${rootSessionId}`,
+        state: expect.objectContaining({
+          actors: [expect.objectContaining({ status: 'disconnected' })],
+        }),
+      }),
+    ]);
+    expect(existsSync(sessionStatePath)).toBe(true);
     expect(JSON.parse(readFileSync(runtimeStatePath, 'utf8'))).toMatchObject({
-      activeRootSessionIds: [],
+      activeRootSessionIds: [rootSessionId],
     });
   });
 

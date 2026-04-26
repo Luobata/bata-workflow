@@ -65,8 +65,14 @@ interface AppProps {
 
 type BoardSocketConnection = Pick<WebSocket, 'close'>;
 type BoardSocketConnector = (url: string, onMessage: (payload: unknown) => void) => BoardSocketConnection;
+type BoardSocketWithLifecycle = BoardSocketConnection & {
+  addEventListener?: (type: 'open' | 'close' | 'error', listener: EventListener) => void;
+  removeEventListener?: (type: 'open' | 'close' | 'error', listener: EventListener) => void;
+};
 
 const DEFAULT_SOCKET_URL = 'ws://127.0.0.1:8787';
+const SOCKET_RECONNECT_BASE_DELAY_MS = 300;
+const SOCKET_RECONNECT_MAX_DELAY_MS = 5_000;
 
 const connectBoardSocket: BoardSocketConnector = (url, onMessage) => {
   const socket = new WebSocket(url);
@@ -407,17 +413,45 @@ const formatClockTime = (value: string) => {
     return value;
   }
 
+  const timeZoneFromUrl = (() => {
+    try {
+      return new URLSearchParams(globalThis.location?.search ?? '').get('timeZone')?.trim() ?? '';
+    } catch {
+      return '';
+    }
+  })();
+
+  const resolvedTimeZone = timeZoneFromUrl || Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+  try {
+    return timestamp.toLocaleTimeString('en-GB', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+      ...(resolvedTimeZone ? { timeZone: resolvedTimeZone } : {}),
+    });
+  } catch {
+    // Fallback when URL timeZone parameter is invalid.
+  }
+
   return timestamp.toLocaleTimeString('en-GB', {
     hour: '2-digit',
     minute: '2-digit',
     hour12: false,
-    timeZone: 'UTC',
   });
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;
 
 const clampPercent = (value: number) => Math.max(0, Math.min(100, Math.round(value)));
+
+const normalizeRatio = (value: number, max: number) => {
+  if (!Number.isFinite(value) || !Number.isFinite(max) || max <= 0) {
+    return 0;
+  }
+
+  return Math.max(0, Math.min(1, value / max));
+};
 
 const getProgressStage = (progressPercent: number) => {
   if (progressPercent >= 95) {
@@ -439,14 +473,46 @@ const getProgressStage = (progressPercent: number) => {
   return 'Booting';
 };
 
-const statusProgressBase: Record<ActorStatus, number> = {
-  active: 52,
-  blocked: 48,
-  canceled: 12,
-  disconnected: 52,
-  failed: 18,
-  idle: 22,
-  done: 92,
+const buildActorProgressPercent = (params: {
+  status: ActorStatus;
+  tokenRatio: number;
+  elapsedRatio: number;
+  eventRatio: number;
+  shellActor: boolean;
+  disconnectedActor: boolean;
+}) => {
+  const { status, tokenRatio, elapsedRatio, eventRatio, shellActor, disconnectedActor } = params;
+
+  if (shellActor) {
+    return 0;
+  }
+
+  if (disconnectedActor) {
+    return 0;
+  }
+
+  if (status === 'done') {
+    return 100;
+  }
+
+  const activityBoost = clampPercent(tokenRatio * 12 + elapsedRatio * 10 + eventRatio * 8);
+
+  switch (status) {
+    case 'active':
+      return Math.min(90, 52 + activityBoost);
+    case 'blocked':
+      return Math.min(84, 44 + activityBoost);
+    case 'idle':
+      return Math.min(74, 30 + activityBoost);
+    case 'failed':
+      return Math.min(40, 18 + Math.round(activityBoost * 0.25));
+    case 'canceled':
+      return 8;
+    case 'disconnected':
+      return 0;
+    default:
+      return clampPercent(24 + activityBoost);
+  }
 };
 
 const operationsDeckTabs: Array<{ id: BoardPanelTab; label: string }> = [
@@ -614,14 +680,14 @@ const adaptActors = (snapshot: SessionSnapshot): AdaptedActorViewModel[] => {
     const eventCount = eventCountByActorId.get(actor.id) ?? 0;
     const shellActor = isShellEvent(latestEvent);
     const disconnectedActor = actor.status === 'disconnected' || isDisconnectedEvent(latestEvent);
-    const progressPercent = shellActor
-      ? 0
-      : clampPercent(
-        statusProgressBase[actor.status]
-        + (actor.totalTokens / maxTokenCount) * 18
-        + (actor.elapsedMs / maxElapsedMs) * 18
-        + (eventCount / maxEventCount) * 12,
-      );
+    const progressPercent = buildActorProgressPercent({
+      status: actor.status,
+      tokenRatio: normalizeRatio(actor.totalTokens, maxTokenCount),
+      elapsedRatio: normalizeRatio(actor.elapsedMs, maxElapsedMs),
+      eventRatio: normalizeRatio(eventCount, maxEventCount),
+      shellActor,
+      disconnectedActor,
+    });
     const progressStage = disconnectedActor ? 'Disconnected' : shellActor ? 'Syncing' : getProgressStage(progressPercent);
 
     return {
@@ -799,7 +865,6 @@ const buildTimelineEntries = (
         actorType,
         status: entry.status,
         timestamp,
-        machineCode: `EVT-${String(entry.sequence).padStart(2, '0')}`,
         summary,
       };
     });
@@ -893,6 +958,7 @@ export const App = ({
     [initialSnapshot, targetMonitorSessionId],
   );
   const [snapshot, setSnapshot] = useState<SessionSnapshot>(resolvedInitialSnapshot);
+  const [socketConnectionIssue, setSocketConnectionIssue] = useState<string | null>(null);
 
   const mode = useBoardStore((state) => state.mode);
   const activePanelTab = useBoardStore((state) => state.activePanelTab);
@@ -906,9 +972,64 @@ export const App = ({
   }, [resolvedInitialSnapshot]);
 
   useEffect(() => {
-    let socket: BoardSocketConnection | null = null;
+    let socket: BoardSocketWithLifecycle | null = null;
     let cancelled = false;
-    const connectionTimer = globalThis.setTimeout(() => {
+    let connectionTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
+    let reconnectDelayMs = SOCKET_RECONNECT_BASE_DELAY_MS;
+
+    const clearScheduledConnect = () => {
+      if (connectionTimer !== null) {
+        globalThis.clearTimeout(connectionTimer);
+        connectionTimer = null;
+      }
+    };
+
+    const scheduleReconnect = () => {
+      if (cancelled || connectionTimer !== null) {
+        return;
+      }
+
+      connectionTimer = globalThis.setTimeout(() => {
+        connectionTimer = null;
+        void connectWithRetry();
+      }, reconnectDelayMs);
+      reconnectDelayMs = Math.min(reconnectDelayMs * 2, SOCKET_RECONNECT_MAX_DELAY_MS);
+    };
+
+    const attachSocketLifecycle = (activeSocket: BoardSocketWithLifecycle) => {
+      if (typeof activeSocket.addEventListener !== 'function' || typeof activeSocket.removeEventListener !== 'function') {
+        setSocketConnectionIssue(null);
+        return () => undefined;
+      }
+
+      const handleOpen = () => {
+        reconnectDelayMs = SOCKET_RECONNECT_BASE_DELAY_MS;
+        setSocketConnectionIssue(null);
+      };
+
+      const handleCloseOrError = () => {
+        if (cancelled) {
+          return;
+        }
+
+        setSocketConnectionIssue('live gateway disconnected · retrying');
+        scheduleReconnect();
+      };
+
+      activeSocket.addEventListener('open', handleOpen);
+      activeSocket.addEventListener('close', handleCloseOrError);
+      activeSocket.addEventListener('error', handleCloseOrError);
+
+      return () => {
+        activeSocket.removeEventListener?.('open', handleOpen);
+        activeSocket.removeEventListener?.('close', handleCloseOrError);
+        activeSocket.removeEventListener?.('error', handleCloseOrError);
+      };
+    };
+
+    let detachSocketLifecycle: () => void = () => {};
+
+    const connectWithRetry = async () => {
       if (cancelled) {
         return;
       }
@@ -916,19 +1037,31 @@ export const App = ({
       try {
         socket = connectSocket(socketUrl, (payload) => {
           if (isSessionSnapshot(payload) && (!targetMonitorSessionId || payload.monitorSessionId === targetMonitorSessionId)) {
+            reconnectDelayMs = SOCKET_RECONNECT_BASE_DELAY_MS;
+            setSocketConnectionIssue(null);
             setSnapshot((currentSnapshot) =>
               isDisconnectedShellSnapshot(payload) ? mergeDisconnectedSnapshot(currentSnapshot, payload) : payload,
             );
           }
-        });
-      } catch {
+        }) as BoardSocketWithLifecycle;
+        detachSocketLifecycle();
+        detachSocketLifecycle = attachSocketLifecycle(socket);
+      } catch (error) {
+        setSocketConnectionIssue(error instanceof Error ? `live gateway unavailable · ${error.message}` : 'live gateway unavailable · retrying');
         socket = null;
+        scheduleReconnect();
       }
+    };
+
+    connectionTimer = globalThis.setTimeout(() => {
+      connectionTimer = null;
+      void connectWithRetry();
     }, 0);
 
     return () => {
       cancelled = true;
-      globalThis.clearTimeout(connectionTimer);
+      clearScheduledConnect();
+      detachSocketLifecycle();
       socket?.close();
     };
   }, [connectSocket, socketUrl, targetMonitorSessionId]);
@@ -950,6 +1083,17 @@ export const App = ({
   const crewCards = useMemo(() => buildCrewCards(actors, mode), [actors, mode]);
   const progressBoardRows = useMemo(() => buildProgressBoardRows(actors), [actors]);
   const selectedActor = actors.find((actor) => actor.id === resolvedSelectedActorId) ?? null;
+  const roleCounts = useMemo(
+    () =>
+      actors.reduce(
+        (counts, actor) => {
+          counts[actor.actorType] += 1;
+          return counts;
+        },
+        { lead: 0, subagent: 0, worker: 0 },
+      ),
+    [actors],
+  );
   const focusTarget = useMemo(() => buildFocusTargetViewModel(selectedActor), [selectedActor]);
   const focusDrawerViewModel = useMemo(
     () => buildFocusDrawerViewModel(selectedActor, mode),
@@ -962,6 +1106,11 @@ export const App = ({
 
   return (
     <div className="board-shell" data-mode={mode} data-selected-actor-id={resolvedSelectedActorId ?? ''}>
+      {socketConnectionIssue ? (
+        <div className="pixel-panel" role="status" aria-live="polite">
+          {socketConnectionIssue}
+        </div>
+      ) : null}
       <TopBar
         mode={mode}
         onModeChange={setMode}
@@ -993,8 +1142,8 @@ export const App = ({
               focusLabel={focusTarget ? `LOG LOCK · ${focusTarget.name.toUpperCase()}` : 'LOG LOCK · ALL LANES'}
               focusDetail={
                 focusTarget
-                  ? `${focusTarget.role} · ${focusTarget.status.toUpperCase()} · ${focusTarget.stage.toUpperCase()} · ${focusTarget.progressPercent}%`
-                  : 'Quest-wide event feed'
+                  ? `${focusTarget.role} · ${focusTarget.status.toUpperCase()} · ${focusTarget.stage.toUpperCase()} · ${focusTarget.progressPercent}% · lead ${roleCounts.lead} · subagent ${roleCounts.subagent} · worker ${roleCounts.worker}`
+                  : `Quest-wide event feed · lead ${roleCounts.lead} · subagent ${roleCounts.subagent} · worker ${roleCounts.worker}`
               }
             />
           ) : activePanelTab === 'runTree' ? (
