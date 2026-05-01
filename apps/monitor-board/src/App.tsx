@@ -445,14 +445,6 @@ const isRecord = (value: unknown): value is Record<string, unknown> => typeof va
 
 const clampPercent = (value: number) => Math.max(0, Math.min(100, Math.round(value)));
 
-const normalizeRatio = (value: number, max: number) => {
-  if (!Number.isFinite(value) || !Number.isFinite(max) || max <= 0) {
-    return 0;
-  }
-
-  return Math.max(0, Math.min(1, value / max));
-};
-
 const getProgressStage = (progressPercent: number) => {
   if (progressPercent >= 95) {
     return 'Completed';
@@ -475,13 +467,11 @@ const getProgressStage = (progressPercent: number) => {
 
 const buildActorProgressPercent = (params: {
   status: ActorStatus;
-  tokenRatio: number;
-  elapsedRatio: number;
-  eventRatio: number;
+  completionRatio: number;
   shellActor: boolean;
   disconnectedActor: boolean;
 }) => {
-  const { status, tokenRatio, elapsedRatio, eventRatio, shellActor, disconnectedActor } = params;
+  const { status, completionRatio, shellActor, disconnectedActor } = params;
 
   if (shellActor) {
     return 0;
@@ -495,23 +485,43 @@ const buildActorProgressPercent = (params: {
     return 100;
   }
 
-  const activityBoost = clampPercent(tokenRatio * 12 + elapsedRatio * 10 + eventRatio * 8);
+  // completionRatio = finished tools / total called tools (0–1).
+  // Falls back to child completion ratio for runtime snapshots, or
+  // tool call completion from timeline for Coco snapshots.
+  if (completionRatio > 0) {
+    const base = Math.round(completionRatio * 90);
+    switch (status) {
+      case 'active':
+        return Math.min(95, base + 5);
+      case 'blocked':
+        return Math.min(90, base + 3);
+      case 'idle':
+        return base;
+      case 'failed':
+        return Math.min(base, 40);
+      case 'canceled':
+        return Math.min(base, 15);
+      default:
+        return base;
+    }
+  }
 
+  // No measurable progress yet. Use lightweight status-based estimates.
   switch (status) {
     case 'active':
-      return Math.min(90, 52 + activityBoost);
+      return 15;
     case 'blocked':
-      return Math.min(84, 44 + activityBoost);
+      return 10;
     case 'idle':
-      return Math.min(74, 30 + activityBoost);
+      return 5;
     case 'failed':
-      return Math.min(40, 18 + Math.round(activityBoost * 0.25));
-    case 'canceled':
       return 8;
+    case 'canceled':
+      return 3;
     case 'disconnected':
       return 0;
     default:
-      return clampPercent(24 + activityBoost);
+      return 5;
   }
 };
 
@@ -667,9 +677,19 @@ const getEventCountByActorId = (snapshot: SessionSnapshot) => {
 const adaptActors = (snapshot: SessionSnapshot): AdaptedActorViewModel[] => {
   const latestEventByActorId = getLatestEventByActorId(snapshot);
   const eventCountByActorId = getEventCountByActorId(snapshot);
-  const maxTokenCount = Math.max(1, ...snapshot.state.actors.map((actor) => actor.totalTokens));
-  const maxElapsedMs = Math.max(1, ...snapshot.state.actors.map((actor) => actor.elapsedMs));
-  const maxEventCount = Math.max(1, ...snapshot.state.actors.map((actor) => eventCountByActorId.get(actor.id) ?? 0));
+  const actorById = new Map(snapshot.state.actors.map((actor) => [actor.id, actor]));
+
+  // Build per-actor tool call completion ratio from timeline events.
+  // tool.called increments total, tool.finished increments completed.
+  const toolCalledByActor = new Map<string, number>();
+  const toolFinishedByActor = new Map<string, number>();
+  snapshot.state.timeline.forEach((event) => {
+    if (event.eventType === 'tool.called') {
+      toolCalledByActor.set(event.actorId, (toolCalledByActor.get(event.actorId) ?? 0) + 1);
+    } else if (event.eventType === 'tool.finished') {
+      toolFinishedByActor.set(event.actorId, (toolFinishedByActor.get(event.actorId) ?? 0) + 1);
+    }
+  });
 
   return snapshot.state.actors.map((actor) => {
     const latestEvent = latestEventByActorId.get(actor.id);
@@ -680,11 +700,33 @@ const adaptActors = (snapshot: SessionSnapshot): AdaptedActorViewModel[] => {
     const eventCount = eventCountByActorId.get(actor.id) ?? 0;
     const shellActor = isShellEvent(latestEvent);
     const disconnectedActor = actor.status === 'disconnected' || isDisconnectedEvent(latestEvent);
+
+    // Calculate completion ratio:
+    // 1. Prefer child task completion (runtime snapshot path with children)
+    // 2. Fall back to tool call completion from timeline (Coco snapshot path)
+    const childIds = actor.children;
+    const totalChildren = childIds.length;
+    const completedChildren = totalChildren > 0
+      ? childIds.filter((childId) => {
+          const child = actorById.get(childId);
+          return child && child.status === 'done';
+        }).length
+      : 0;
+
+    let completionRatio = 0;
+    if (totalChildren > 0) {
+      completionRatio = completedChildren / totalChildren;
+    } else {
+      const called = toolCalledByActor.get(actor.id) ?? 0;
+      const finished = toolFinishedByActor.get(actor.id) ?? 0;
+      if (called > 0) {
+        completionRatio = finished / called;
+      }
+    }
+
     const progressPercent = buildActorProgressPercent({
       status: actor.status,
-      tokenRatio: normalizeRatio(actor.totalTokens, maxTokenCount),
-      elapsedRatio: normalizeRatio(actor.elapsedMs, maxElapsedMs),
-      eventRatio: normalizeRatio(eventCount, maxEventCount),
+      completionRatio,
       shellActor,
       disconnectedActor,
     });
@@ -1136,8 +1178,9 @@ export const App = ({
               </button>
             ))}
           </div>
-          {activePanelTab === 'timeline' ? (
-            <TimelinePanel
+          <div className="board-side-content" key={activePanelTab}>
+            {activePanelTab === 'timeline' ? (
+              <TimelinePanel
               entries={visibleTimelineEntries}
               focusLabel={focusTarget ? `LOG LOCK · ${focusTarget.name.toUpperCase()}` : 'LOG LOCK · ALL LANES'}
               focusDetail={
@@ -1151,6 +1194,7 @@ export const App = ({
           ) : (
             <ProgressBoardPanel overallProgress={overallProgress} rows={progressBoardRows} />
           )}
+          </div>
         </div>
       </main>
     </div>

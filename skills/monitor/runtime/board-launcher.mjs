@@ -1,7 +1,7 @@
-import { randomUUID } from 'node:crypto'
+import { randomUUID, createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { existsSync, readdirSync } from 'node:fs'
+import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import net from 'node:net'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -9,7 +9,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 const DEFAULT_HOST = '127.0.0.1'
 const DEFAULT_PORT = 5173
 const DEFAULT_PORT_SCAN_LIMIT = 25
-const DEFAULT_GATEWAY_PORT = 8787
+const DEFAULT_GATEWAY_PORT = 9000
 const DEFAULT_GATEWAY_PORT_SCAN_LIMIT = 25
 const DEFAULT_TIMEOUT_MS = 10_000
 const DEFAULT_IDENTITY_TIMEOUT_MS = 1_000
@@ -30,7 +30,14 @@ const toBoardUrl = (host, port, monitorSessionId, gatewayPort) => {
 
 const toBaseUrl = (host, port) => `http://${host}:${port}`
 const toIdentityUrl = (host, port) => `${toBaseUrl(host, port)}/__monitor_board_identity`
-const toRuntimeStatePath = (stateRoot) => resolve(stateRoot, 'monitor-board', 'runtime.json')
+const toRuntimeStatePath = (stateRoot, rootSessionId) => {
+  if (rootSessionId) {
+    const hash = createHash('sha1').update(rootSessionId).digest('hex').slice(0, 12)
+    return resolve(stateRoot, 'monitor-board', `runtime-${hash}.json`)
+  }
+
+  return resolve(stateRoot, 'monitor-board', 'runtime.json')
+}
 
 const isValidPort = (value) => Number.isInteger(value) && value > 0 && value <= 65_535
 
@@ -235,18 +242,48 @@ async function maybeCleanupIdleConflictingBoard({
     return false
   }
 
-  const conflictingRuntimeStatePath = toRuntimeStatePath(identity.stateRoot)
-  const conflictingRuntimeState = await readRuntimeState(conflictingRuntimeStatePath)
-  const activeRootSessionIds = normalizeActiveRootSessionIds(conflictingRuntimeState?.activeRootSessionIds)
+  // Check all runtime state files in the conflicting board's state root
+  const conflictingBoardDir = resolve(identity.stateRoot, 'monitor-board')
 
-  if (conflictingRuntimeState && activeRootSessionIds.length > 0) {
+  // If the directory doesn't exist, the board has no persisted state — safe to clean up
+  if (!existsSync(conflictingBoardDir)) {
+    await cleanupProcess({ child: null, pid: identity.pid })
+    return true
+  }
+
+  let hasActiveSessions = false
+
+  try {
+    const entries = await readdir(conflictingBoardDir)
+    const runtimeFiles = entries.filter((name) => (name.startsWith('runtime-') || name === 'runtime.json') && name.endsWith('.json'))
+
+    for (const fileName of runtimeFiles) {
+      const filePath = resolve(conflictingBoardDir, fileName)
+      const runtimeState = await readRuntimeState(filePath)
+      const activeRootSessionIds = normalizeActiveRootSessionIds(runtimeState?.activeRootSessionIds)
+
+      if (activeRootSessionIds.length > 0) {
+        hasActiveSessions = true
+        break
+      }
+    }
+  } catch {
+    // If we can't read the directory, don't clean up.
+    return false
+  }
+
+  if (hasActiveSessions) {
     return false
   }
 
   await cleanupProcess({ child: null, pid: identity.pid })
 
   try {
-    await rm(conflictingRuntimeStatePath, { force: true })
+    const entries = await readdir(conflictingBoardDir)
+    const runtimeFiles = entries.filter((name) => (name.startsWith('runtime-') || name === 'runtime.json') && name.endsWith('.json'))
+    for (const fileName of runtimeFiles) {
+      await rm(resolve(conflictingBoardDir, fileName), { force: true })
+    }
   } catch {}
 
   return true

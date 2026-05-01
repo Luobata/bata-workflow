@@ -202,7 +202,7 @@ describe('monitor skill runtime', () => {
     expect(ensureBoardRunning).toHaveBeenCalledWith(
       expect.objectContaining({
         repoRoot: resolve(import.meta.dirname, '..', '..', '..'),
-        runtimeStatePath: resolve(cwd, '.bata-workflow', 'state', 'monitor-board', 'runtime.json'),
+        runtimeStatePath: expect.stringMatching(/runtime-[0-9a-f]{12}\.json$/),
         stateRoot: resolve(cwd, '.bata-workflow', 'state'),
         host: '127.0.0.1',
         preferredPort: 5173,
@@ -269,7 +269,7 @@ describe('monitor skill runtime', () => {
     expect(existsSync(isolatedSessionPath)).toBe(true)
     expect(ensureBoardRunning).toHaveBeenCalledWith(
       expect.objectContaining({
-        runtimeStatePath: resolve(isolatedStateRoot, 'monitor-board', 'runtime.json'),
+        runtimeStatePath: expect.stringMatching(/runtime-[0-9a-f]{12}\.json$/),
         stateRoot: isolatedStateRoot,
       }),
     )
@@ -883,7 +883,8 @@ describe('monitor skill runtime', () => {
 
     expect(cleanup.boardAction).toMatch(/stopped|stale-state-cleared/)
     await waitForPortToClose(boardHost, boardPort)
-    expect(existsSync(resolve(stateRoot, 'monitor-board', 'runtime.json'))).toBe(false)
+    expect(cleanup.boardRuntimeStatePath).toMatch(/runtime-[0-9a-f]{12}\.json$/)
+    expect(existsSync(cleanup.boardRuntimeStatePath)).toBe(false)
   }, 30_000)
 
   it('adds a migration hint when a legacy scoped install path exists', async () => {

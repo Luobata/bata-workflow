@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 
 const pixelMons = ['pikachu', 'charizard', 'gengar'] as const;
 type PixelMon = (typeof pixelMons)[number];
@@ -70,6 +70,9 @@ const pixelMonSprites: Record<PixelMon, string[]> = {
   ],
 };
 
+const COLLAPSIBLE_STATUSES = new Set(['done', 'idle', 'canceled', 'disconnected', 'waiting']);
+const COMPACT_MODE_THRESHOLD = 8;
+
 const PixelPetSprite = ({ pixelMon }: { pixelMon: PixelMon }) => {
   const sprite = pixelMonSprites[pixelMon];
   const palette = pixelMonPalettes[pixelMon];
@@ -125,7 +128,37 @@ interface CrewGridProps {
   onFocus: (actorId: string) => void;
 }
 
+const CompactListRow = ({ actor, isSelected, onFocus }: { actor: CrewCard; isSelected: boolean; onFocus: (id: string) => void }) => (
+  <button
+    type="button"
+    className={`crew-list-row${isSelected ? ' is-selected' : ''}`}
+    data-status={actor.status}
+    data-actor-type={actor.actorType}
+    onClick={() => onFocus(actor.id)}
+    aria-label={`${actor.name} ${actor.status} ${actor.progressPercent}%`}
+    aria-pressed={isSelected}
+  >
+    <span className="crew-list-dot" data-status={actor.status} aria-hidden="true" />
+    <span className="crew-list-name">{actor.name}</span>
+    <span className="crew-list-role">{actor.role}</span>
+    <span className="crew-list-status">{actor.status}</span>
+    <span className="crew-list-progress">{actor.progressPercent}%</span>
+    <span className="crew-list-stage">{actor.progressStage}</span>
+  </button>
+);
+
+const CollapsedSummary = ({ count, statusLabel, onExpand }: { count: number; statusLabel: string; onExpand: () => void }) => (
+  <button type="button" className="crew-collapsed-summary" onClick={onExpand}>
+    <span className="crew-collapsed-count">{count}</span>
+    <span className="crew-collapsed-label">{statusLabel}</span>
+    <span className="crew-collapsed-action">▸ expand</span>
+  </button>
+);
+
 export const CrewGrid = ({ actors, selectedActorId, onFocus }: CrewGridProps) => {
+  const [showAll, setShowAll] = useState(false);
+  const useCompactMode = actors.length > COMPACT_MODE_THRESHOLD;
+
   const toPixelMon = (actor: CrewCard, index: number): PixelMon => {
     const seed = `${actor.id}:${actor.actorType}:${actor.role}`;
     const hash = Array.from(seed).reduce((total, char, charIndex) => {
@@ -135,12 +168,38 @@ export const CrewGrid = ({ actors, selectedActorId, onFocus }: CrewGridProps) =>
     return pixelMons[(hash + index) % pixelMons.length];
   };
 
+  const activeActors = actors.filter((a) => !COLLAPSIBLE_STATUSES.has(a.status));
+  const collapsedActors = actors.filter((a) => COLLAPSIBLE_STATUSES.has(a.status));
+  const visibleActors = showAll ? actors : activeActors;
+
+  // Compact list mode
+  if (useCompactMode) {
+    return (
+      <section className="pixel-panel board-panel">
+        <div className="panel-section">
+          <h2 className="panel-title">PIXEL CREW</h2>
+          <div className="crew-list" role="list" aria-label="Actor list">
+            {actors.map((actor) => (
+              <CompactListRow
+                key={actor.id}
+                actor={actor}
+                isSelected={actor.id === selectedActorId}
+                onFocus={onFocus}
+              />
+            ))}
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  // Card grid mode with collapse
   return (
     <section className="pixel-panel board-panel">
       <div className="panel-section">
         <h2 className="panel-title">PIXEL CREW</h2>
         <div className="crew-grid">
-          {actors.map((actor, index) => {
+          {visibleActors.map((actor, index) => {
             const isSelected = actor.id === selectedActorId;
             const pixelMon = toPixelMon(actor, index);
 
@@ -188,6 +247,18 @@ export const CrewGrid = ({ actors, selectedActorId, onFocus }: CrewGridProps) =>
             );
           })}
         </div>
+        {collapsedActors.length > 0 && !showAll ? (
+          <CollapsedSummary
+            count={collapsedActors.length}
+            statusLabel={`${collapsedActors.length} completed · click to expand`}
+            onExpand={() => setShowAll(true)}
+          />
+        ) : showAll && collapsedActors.length > 0 ? (
+          <button type="button" className="crew-collapsed-summary" onClick={() => setShowAll(false)}>
+            <span className="crew-collapsed-label">Collapse completed</span>
+            <span className="crew-collapsed-action">▾ hide</span>
+          </button>
+        ) : null}
       </div>
     </section>
   );

@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { BoardEventSchema, createBoardEventId } from './schema';
+import { describe, expect, it } from 'vitest'
+import { BoardEventSchema, createBoardEventId } from './schema.js'
 
 const createValidEvent = (overrides: Record<string, unknown> = {}) => ({
   id: createBoardEventId('actor.spawned', 'lead-1', 1),
@@ -28,14 +28,14 @@ const createValidEvent = (overrides: Record<string, unknown> = {}) => ({
   monitorInherited: false,
   monitorOwnerActorId: 'lead-1',
   ...overrides,
-});
+})
 
 describe('BoardEventSchema', () => {
   it('accepts a spawned actor event', () => {
-    const event = BoardEventSchema.parse(createValidEvent());
+    const event = BoardEventSchema.parse(createValidEvent())
 
-    expect(event.actorType).toBe('lead');
-  });
+    expect(event.actorType).toBe('lead')
+  })
 
   it('rejects tool.called events when toolName is null', () => {
     expect(() =>
@@ -49,8 +49,8 @@ describe('BoardEventSchema', () => {
           summary: 'Tool called',
         }),
       ),
-    ).toThrow(/toolName/);
-  });
+    ).toThrow(/toolName/)
+  })
 
   it('rejects invalid timestamps', () => {
     expect(() =>
@@ -59,8 +59,8 @@ describe('BoardEventSchema', () => {
           timestamp: 'not-a-timestamp',
         }),
       ),
-    ).toThrow(/timestamp/);
-  });
+    ).toThrow(/timestamp/)
+  })
 
   it('rejects negative token counts', () => {
     expect(() =>
@@ -69,8 +69,8 @@ describe('BoardEventSchema', () => {
           tokenIn: -1,
         }),
       ),
-    ).toThrow(/tokenIn/);
-  });
+    ).toThrow(/tokenIn/)
+  })
 
   it('rejects invalid event types', () => {
     expect(() =>
@@ -79,8 +79,8 @@ describe('BoardEventSchema', () => {
           eventType: 'tool.unknown',
         }),
       ),
-    ).toThrow(/eventType/);
-  });
+    ).toThrow(/eventType/)
+  })
 
   it('rejects invalid actor types', () => {
     expect(() =>
@@ -100,6 +100,6 @@ describe('BoardEventSchema', () => {
           tags: [],
         }),
       ),
-    ).toThrow(/actorType/);
-  });
-});
+    ).toThrow(/actorType/)
+  })
+})

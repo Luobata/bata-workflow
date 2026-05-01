@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 
 export interface TimelineEntry {
@@ -11,6 +11,15 @@ export interface TimelineEntry {
   summary: string;
 }
 
+type ActorTypeFilter = 'all' | 'lead' | 'subagent' | 'worker';
+
+const actorTypeFilterOptions: Array<{ id: ActorTypeFilter; label: string }> = [
+  { id: 'all', label: 'All' },
+  { id: 'lead', label: 'Lead' },
+  { id: 'subagent', label: 'Sub' },
+  { id: 'worker', label: 'Worker' },
+];
+
 interface TimelinePanelProps {
   entries: TimelineEntry[];
   focusLabel: string;
@@ -21,29 +30,44 @@ export const TimelinePanel = ({ entries, focusLabel, focusDetail }: TimelinePane
   const parentRef = useRef<HTMLDivElement | null>(null);
   const autoStickToBottomRef = useRef(true);
   const rowHeight = 72;
+  const [actorFilter, setActorFilter] = useState<ActorTypeFilter>('all');
+
+  const filteredEntries = actorFilter === 'all' ? entries : entries.filter((e) => e.actorType === actorFilter);
 
   const rowVirtualizer = useVirtualizer({
-    count: entries.length,
+    count: filteredEntries.length,
     getScrollElement: () => parentRef.current,
     estimateSize: () => rowHeight,
+    measureElement: (el) => el.getBoundingClientRect().height,
     overscan: 3,
   });
   const virtualRows = rowVirtualizer.getVirtualItems();
   const renderedRows = virtualRows.length
     ? virtualRows.map((virtualRow) => ({
         key: virtualRow.key,
-        entry: entries[virtualRow.index],
+        index: virtualRow.index,
+        entry: filteredEntries[virtualRow.index],
         start: virtualRow.start,
       }))
-    : entries.map((entry, index) => ({
+    : filteredEntries.map((entry, index) => ({
         key: entry.id,
+        index,
         entry,
         start: index * rowHeight,
       }));
 
+  const measureRef = useCallback(
+    (el: HTMLDivElement | null, index: number) => {
+      if (el) {
+        rowVirtualizer.measureElement(el);
+      }
+    },
+    [rowVirtualizer],
+  );
+
   useEffect(() => {
     const parent = parentRef.current;
-    if (!parent || entries.length === 0) {
+    if (!parent || filteredEntries.length === 0) {
       return;
     }
 
@@ -51,8 +75,8 @@ export const TimelinePanel = ({ entries, focusLabel, focusDetail }: TimelinePane
       return;
     }
 
-    rowVirtualizer.scrollToIndex(entries.length - 1, { align: 'end' });
-  }, [entries.length, rowVirtualizer]);
+    rowVirtualizer.scrollToIndex(filteredEntries.length - 1, { align: 'end' });
+  }, [filteredEntries.length, rowVirtualizer]);
 
   const handleTimelineScroll: React.UIEventHandler<HTMLDivElement> = (event) => {
     const element = event.currentTarget;
@@ -63,16 +87,32 @@ export const TimelinePanel = ({ entries, focusLabel, focusDetail }: TimelinePane
   return (
     <section className="pixel-panel board-panel">
       <div className="panel-section timeline-panel">
-        <h2 className="panel-title">TIMELINE</h2>
+        <div className="timeline-panel-head">
+          <h2 className="panel-title">TIMELINE</h2>
+          <div className="timeline-filter" role="group" aria-label="Filter timeline by actor type">
+            {actorTypeFilterOptions.map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                className={`mode-button timeline-filter-btn${actorFilter === opt.id ? ' is-active' : ''}`}
+                onClick={() => setActorFilter(opt.id)}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
         <div className="timeline-focus-banner" role="status" aria-label="Timeline focus lock">
           <strong className="timeline-focus-label">{focusLabel}</strong>
           <span className="timeline-focus-detail">{focusDetail}</span>
         </div>
         <div ref={parentRef} className="timeline-scroll" aria-label="Timeline" onScroll={handleTimelineScroll}>
           <div className="timeline-virtual-space" style={{ height: `${rowVirtualizer.getTotalSize()}px` }}>
-            {renderedRows.map(({ key, entry, start }) => (
+            {renderedRows.map(({ key, index, entry, start }) => (
               <div
                 key={key}
+                ref={(el) => measureRef(el, index)}
+                data-index={index}
                 className="timeline-row"
                 data-actor-id={entry.actorId}
                 data-actor-type={entry.actorType}

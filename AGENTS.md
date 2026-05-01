@@ -86,8 +86,11 @@ For monitor changes, prefer this order:
    - `apps/bata-workflow/tests/monitor-board-launcher.test.ts`
    - Add/keep Coco bridge cases in `apps/monitor-board/src/monitor/gateway/bata-workflow-live.test.ts`
 2. `pnpm build` for `apps/monitor-board`
-3. Browser reload against an isolated state root
-4. WebSocket probe only after the above checks are green
+3. Playwright e2e tests (required for any UI/layout/CSS change)
+   - `pnpm --dir apps/monitor-board test:e2e`
+   - Add new e2e cases in `apps/monitor-board/e2e/` for the changed behavior
+4. Browser reload against an isolated state root
+5. WebSocket probe only after the above checks are green
 
 ## Monitor board lifecycle invariants (must keep)
 
@@ -143,9 +146,45 @@ If the board still looks fake, check in this order:
 7. Does the matching run have both `queue.json` and `task-store.json`?
 8. Are you accidentally validating against a polluted shared `.bata-workflow/state` instead of an isolated one?
 
+## UI changes require e2e tests
+
+Any change to `apps/monitor-board` that affects layout, CSS, component structure, or visual behavior **must** include Playwright e2e tests and verify they pass before claiming the change is complete.
+
+This includes but is not limited to:
+
+- CSS layout changes (flex, grid, breakpoints, heights, overflow)
+- Component structural changes (new wrappers, attribute changes, conditional rendering)
+- Responsive design / viewport-dependent behavior
+- Animation or transition additions
+- Filter, sort, or toggle UI interactions
+
+**Test location:** `apps/monitor-board/e2e/*.spec.ts`
+
+**Run command:**
+
+```bash
+pnpm --dir apps/monitor-board test:e2e
+```
+
+**Verification flow for UI changes:**
+
+1. Make the CSS/TSX change.
+2. Add or update an e2e test in `apps/monitor-board/e2e/` that validates the change in a real browser.
+3. Run `pnpm --dir apps/monitor-board test:e2e` and confirm all e2e tests pass.
+4. Run `pnpm --dir apps/monitor-board test` and confirm all unit tests still pass.
+5. Only then consider the change complete.
+
+**E2e test patterns:**
+
+- Use `page.goto('/?seed=...')` for deterministic demo data; never rely on live runtime for layout tests.
+- Use `page.setViewportSize()` to test responsive breakpoints.
+- Use `locator.evaluate((el) => getComputedStyle(el).property)` to assert computed styles rather than relying on visual screenshots.
+- Use `MONITOR_GATEWAY_PORT=18787 pnpm dev --port 4199` as the webServer command to avoid port conflicts with running instances.
+
 ## Guardrails
 
 - Do not hand-edit persistent `runs/*` data just to make the UI look populated.
 - Do not hand-edit Coco cache files just to force a monitor screenshot; use isolated fixtures/state roots for reproducible tests.
 - Do not treat browser visuals alone as proof of live correctness; always verify the state root and websocket payload.
 - When the board is in shell fallback mode, keep the UI explicit that it is waiting for runtime data rather than implying fake progress.
+- Do not skip e2e test verification for UI changes; unit tests (jsdom) cannot validate CSS layout, overflow, or responsive breakpoints.

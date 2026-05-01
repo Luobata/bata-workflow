@@ -4,8 +4,8 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   resolve: {
     alias: {
-      '@monitor/protocol': fileURLToPath(new URL('./src/monitor/protocol/index.ts', import.meta.url)),
-      '@monitor/runtime-store': fileURLToPath(new URL('./src/monitor/runtime-store/index.ts', import.meta.url)),
+      '@monitor/protocol': fileURLToPath(new URL('../../skills/monitor/src/protocol/index.ts', import.meta.url)),
+      '@monitor/runtime-store': fileURLToPath(new URL('../../skills/monitor/src/runtime-store/index.ts', import.meta.url)),
       '@monitor/monitor-gateway': fileURLToPath(new URL('./src/monitor/gateway/index.ts', import.meta.url)),
       '@monitor/monitor-skill': fileURLToPath(new URL('./src/monitor/skill/index.ts', import.meta.url)),
       '@monitor/host-coco-hook': fileURLToPath(new URL('./src/monitor/host-coco/index.ts', import.meta.url)),
@@ -13,7 +13,7 @@ export default defineConfig({
     },
   },
   test: {
-    include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
+    include: ['src/**/*.test.ts', 'src/**/*.test.tsx', '../../skills/monitor/src/**/*.test.ts'],
     environment: 'jsdom',
   },
 });

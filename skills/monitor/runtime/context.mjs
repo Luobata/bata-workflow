@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, realpathSync } from 'node:fs'
+import { existsSync, readdirSync, mkdirSync, realpathSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -75,6 +75,34 @@ export function getSessionStateFileName(rootSessionId) {
   return `${encodeURIComponent(rootSessionId)}.json`
 }
 
+export function toSessionRuntimeStateFileName(rootSessionId) {
+  const hash = createHash('sha1').update(rootSessionId).digest('hex').slice(0, 12)
+  return `runtime-${hash}.json`
+}
+
+export function toLegacyRuntimeStateFileName() {
+  return 'runtime.json'
+}
+
+export function resolveBoardRuntimeStatePath(bataWorkflowStateRoot, rootSessionId) {
+  return resolve(bataWorkflowStateRoot, 'monitor-board', toSessionRuntimeStateFileName(rootSessionId))
+}
+
+export function findRuntimeStatePathForSession(bataWorkflowStateRoot, rootSessionId) {
+  const perSessionPath = resolveBoardRuntimeStatePath(bataWorkflowStateRoot, rootSessionId)
+  if (existsSync(perSessionPath)) {
+    return perSessionPath
+  }
+
+  // Fallback: check legacy runtime.json that may contain this rootSessionId
+  const legacyPath = resolve(bataWorkflowStateRoot, 'monitor-board', toLegacyRuntimeStateFileName())
+  if (existsSync(legacyPath)) {
+    return legacyPath
+  }
+
+  return perSessionPath
+}
+
 export function resolveMonitorContext(options = {}) {
   const cwd = resolve(options.cwd ?? process.cwd())
   const homeDir = resolve(options.homeDir ?? process.env.HOME ?? process.env.USERPROFILE ?? cwd)
@@ -83,13 +111,14 @@ export function resolveMonitorContext(options = {}) {
   const boardRepoRoot = findBoardRepoRoot(cwd) ?? findBoardRepoRootFromSkillSource()
   const boardHost = options.boardHost ?? DEFAULT_BOARD_HOST
   const boardPort = resolveBoardPort(options.boardPort)
-  const boardRuntimeStatePath = boardRepoRoot
-    ? resolve(bataWorkflowStateRoot, 'monitor-board', 'runtime.json')
-    : null
 
   mkdirSync(stateRoot, { recursive: true })
 
   const rootSessionId = options.rootSessionId ?? resolveLiveCocoSessionId() ?? deriveWorkspaceHashSessionId(cwd)
+  const boardRuntimeStatePath = boardRepoRoot
+    ? resolveBoardRuntimeStatePath(bataWorkflowStateRoot, rootSessionId)
+    : null
+
   const requesterActorId = options.requesterActorId ?? process.env.COCO_ACTOR_ID ?? DEFAULT_REQUESTER_ACTOR_ID
   const isRootActor = resolveBooleanOption(options, 'isRootActor', isDefaultRootActorId(requesterActorId))
   const stateFilePath = resolve(stateRoot, getSessionStateFileName(rootSessionId))

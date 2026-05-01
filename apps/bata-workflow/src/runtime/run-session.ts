@@ -132,7 +132,12 @@ function getMonitorSessionStatePath(stateRoot: string, rootSessionId: string): s
   return resolve(stateRoot, 'monitor-sessions', `${encodeURIComponent(rootSessionId)}.json`)
 }
 
-function getMonitorBoardRuntimeStatePath(stateRoot: string): string {
+function getMonitorBoardRuntimeStatePath(stateRoot: string, rootSessionId?: string): string {
+  if (rootSessionId) {
+    const hash = createHash('sha1').update(rootSessionId).digest('hex').slice(0, 12)
+    return resolve(stateRoot, 'monitor-board', `runtime-${hash}.json`)
+  }
+
   return resolve(stateRoot, 'monitor-board', 'runtime.json')
 }
 
@@ -224,7 +229,7 @@ export async function cleanupMonitorSessionForWorkspace(params: {
   const rootSessionId = params.rootSessionId ?? getRootSessionIdForWorkspace(workspaceRoot)
   const stateRoot = resolve(params.stateRoot ?? resolve(workspaceRoot, ...DEFAULT_MONITOR_STATE_ROOT_RELATIVE_PATH))
   const sessionStatePath = getMonitorSessionStatePath(stateRoot, rootSessionId)
-  const boardRuntimeStatePath = getMonitorBoardRuntimeStatePath(stateRoot)
+  const boardRuntimeStatePath = getMonitorBoardRuntimeStatePath(stateRoot, rootSessionId)
   const cleanupMonitorBoardProcess = params.cleanupMonitorBoardProcess ?? defaultCleanupMonitorBoardProcess
   const sessionStateExists = existsSync(sessionStatePath)
 

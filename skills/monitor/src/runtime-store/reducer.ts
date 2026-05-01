@@ -10,9 +10,22 @@ const compareEventOrder = (left: Pick<BoardEvent, 'timestamp' | 'sequence'>, rig
 }
 
 const insertTimelineEvent = (timeline: BoardEvent[], event: BoardEvent): BoardEvent[] => {
-  const nextTimeline = [...timeline, event]
-  nextTimeline.sort(compareEventOrder)
-  return nextTimeline
+  // Binary search for insertion point — timeline is always kept sorted,
+  // so we can exploit that with O(log n) search instead of O(n log n) sort.
+  const eventKey = { timestamp: event.timestamp, sequence: event.sequence }
+  let low = 0
+  let high = timeline.length
+
+  while (low < high) {
+    const mid = (low + high) >>> 1
+    if (compareEventOrder(eventKey, { timestamp: timeline[mid].timestamp, sequence: timeline[mid].sequence }) < 0) {
+      high = mid
+    } else {
+      low = mid + 1
+    }
+  }
+
+  return [...timeline.slice(0, low), event, ...timeline.slice(low)]
 }
 
 const isEventNewer = (previous: ActorNode | undefined, event: BoardEvent) => {

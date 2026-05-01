@@ -12,8 +12,10 @@ interface FocusDrawerProps {
 }
 
 export const FocusDrawer = ({ viewModel }: FocusDrawerProps) => {
+  const isEmpty = viewModel.focusLine === 'Focus: none';
+
   return (
-    <section className="pixel-panel board-panel focus-drawer">
+    <section className="pixel-panel board-panel focus-drawer" data-empty={isEmpty || undefined}>
       <div className="panel-section">
         <div className="focus-shell">
           <div className="focus-shell-head">

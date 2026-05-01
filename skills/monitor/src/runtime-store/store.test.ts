@@ -1,16 +1,16 @@
-import { describe, expect, it } from 'vitest';
-import { createBoardEventId, type BoardEvent } from '@monitor/protocol';
-import { createInitialBoardState } from './state';
-import { reduceBoardEvent } from './reducer';
-import { selectTopBarStats, selectVisibleTimeline } from './selectors';
+import { describe, expect, it } from 'vitest'
+import { createBoardEventId, type BoardEvent } from '../protocol/index.js'
+import { createInitialBoardState } from './state.js'
+import { reduceBoardEvent } from './reducer.js'
+import { selectTopBarStats, selectVisibleTimeline } from './selectors.js'
 
-type ToolBoardEvent = Extract<BoardEvent, { toolName: string }>;
-type NonToolBoardEvent = Exclude<BoardEvent, ToolBoardEvent>;
+type ToolBoardEvent = Extract<BoardEvent, { toolName: string }>
+type NonToolBoardEvent = Exclude<BoardEvent, ToolBoardEvent>
 
 const createEvent = (overrides: Partial<NonToolBoardEvent> = {}): NonToolBoardEvent => {
-  const eventType: NonToolBoardEvent['eventType'] = overrides.eventType ?? 'actor.spawned';
-  const actorId = overrides.actorId ?? 'lead-1';
-  const sequence = overrides.sequence ?? 1;
+  const eventType: NonToolBoardEvent['eventType'] = overrides.eventType ?? 'actor.spawned'
+  const actorId = overrides.actorId ?? 'lead-1'
+  const sequence = overrides.sequence ?? 1
 
   return {
     id: overrides.id ?? createBoardEventId(eventType, actorId, sequence),
@@ -38,13 +38,13 @@ const createEvent = (overrides: Partial<NonToolBoardEvent> = {}): NonToolBoardEv
     monitorEnabled: overrides.monitorEnabled ?? true,
     monitorInherited: overrides.monitorInherited ?? false,
     monitorOwnerActorId: overrides.monitorOwnerActorId ?? 'lead-1',
-  };
-};
+  }
+}
 
 const createToolEvent = (overrides: Partial<ToolBoardEvent> = {}): ToolBoardEvent => {
-  const eventType: ToolBoardEvent['eventType'] = overrides.eventType ?? 'tool.called';
-  const actorId = overrides.actorId ?? 'lead-1';
-  const sequence = overrides.sequence ?? 1;
+  const eventType: ToolBoardEvent['eventType'] = overrides.eventType ?? 'tool.called'
+  const actorId = overrides.actorId ?? 'lead-1'
+  const sequence = overrides.sequence ?? 1
 
   return {
     id: overrides.id ?? createBoardEventId(eventType, actorId, sequence),
@@ -72,14 +72,14 @@ const createToolEvent = (overrides: Partial<ToolBoardEvent> = {}): ToolBoardEven
     monitorEnabled: overrides.monitorEnabled ?? true,
     monitorInherited: overrides.monitorInherited ?? false,
     monitorOwnerActorId: overrides.monitorOwnerActorId ?? 'lead-1',
-  };
-};
+  }
+}
 
 describe('runtime-store', () => {
   it('builds actor tree and aggregates top-bar stats', () => {
-    let state = createInitialBoardState();
+    let state = createInitialBoardState()
 
-    state = reduceBoardEvent(state, createEvent());
+    state = reduceBoardEvent(state, createEvent())
     state = reduceBoardEvent(
       state,
       createEvent({
@@ -96,7 +96,7 @@ describe('runtime-store', () => {
         elapsedMs: 300,
         summary: 'Waiting for input',
       }),
-    );
+    )
     state = reduceBoardEvent(
       state,
       createEvent({
@@ -114,14 +114,14 @@ describe('runtime-store', () => {
         elapsedMs: 120,
         summary: 'Inspecting file',
       }),
-    );
+    )
 
     expect(state.actors.get('lead-1')).toMatchObject({
       children: ['subagent-1'],
       totalTokens: 15,
       elapsedMs: 100,
       lastEventAt: '2026-04-18T12:00:00.000Z',
-    });
+    })
     expect(state.actors.get('subagent-1')).toMatchObject({
       parentActorId: 'lead-1',
       children: ['worker-1'],
@@ -131,13 +131,13 @@ describe('runtime-store', () => {
       totalTokens: 30,
       elapsedMs: 300,
       lastEventAt: '2026-04-18T12:00:01.000Z',
-    });
+    })
     expect(state.actors.get('worker-1')).toMatchObject({
       parentActorId: 'subagent-1',
       children: [],
       toolName: 'Read',
       totalTokens: 10,
-    });
+    })
 
     expect(selectTopBarStats(state)).toEqual({
       actorCount: 3,
@@ -145,11 +145,11 @@ describe('runtime-store', () => {
       blockedCount: 1,
       totalTokens: 55,
       elapsedMs: 300,
-    });
-  });
+    })
+  })
 
   it('keeps newest actor snapshot when stale events arrive late while preserving a fully sorted timeline', () => {
-    let state = createInitialBoardState();
+    let state = createInitialBoardState()
 
     state = reduceBoardEvent(
       state,
@@ -167,7 +167,7 @@ describe('runtime-store', () => {
         elapsedMs: 240,
         summary: 'Finished latest work',
       }),
-    );
+    )
     state = reduceBoardEvent(
       state,
       createToolEvent({
@@ -184,7 +184,7 @@ describe('runtime-store', () => {
         elapsedMs: 120,
         summary: 'Older event arrived late',
       }),
-    );
+    )
     state = reduceBoardEvent(
       state,
       createEvent({
@@ -193,7 +193,7 @@ describe('runtime-store', () => {
         sequence: 1,
         summary: 'Lead started before worker events',
       }),
-    );
+    )
 
     expect(state.actors.get('worker-1')).toMatchObject({
       parentActorId: 'lead-1',
@@ -204,17 +204,17 @@ describe('runtime-store', () => {
       elapsedMs: 240,
       lastEventAt: '2026-04-18T12:00:02.000Z',
       lastEventSequence: 3,
-    });
+    })
 
     expect(state.timeline.map((event) => `${event.timestamp}#${event.sequence}:${event.actorId}:${event.summary}`)).toEqual([
       '2026-04-18T12:00:00.000Z#1:lead-1:Lead started before worker events',
       '2026-04-18T12:00:01.000Z#2:worker-1:Older event arrived late',
       '2026-04-18T12:00:02.000Z#3:worker-1:Finished latest work',
-    ]);
-  });
+    ])
+  })
 
   it('sorts timeline and filters by selected actor', () => {
-    let state = createInitialBoardState();
+    let state = createInitialBoardState()
 
     state = reduceBoardEvent(
       state,
@@ -225,8 +225,8 @@ describe('runtime-store', () => {
         timestamp: '2026-04-18T12:00:01.000Z',
         sequence: 2,
       }),
-    );
-    state = reduceBoardEvent(state, createEvent());
+    )
+    state = reduceBoardEvent(state, createEvent())
     state = reduceBoardEvent(
       state,
       createToolEvent({
@@ -239,16 +239,16 @@ describe('runtime-store', () => {
         sequence: 3,
         summary: 'Read complete',
       }),
-    );
+    )
 
     expect(state.timeline.map((event) => `${event.timestamp}#${event.sequence}:${event.actorId}`)).toEqual([
       '2026-04-18T12:00:00.000Z#1:lead-1',
       '2026-04-18T12:00:01.000Z#2:worker-1',
       '2026-04-18T12:00:01.000Z#3:worker-1',
-    ]);
+    ])
 
-    expect(selectVisibleTimeline(state)).toHaveLength(3);
-    expect(selectVisibleTimeline(state, 'worker-1').map((event) => event.sequence)).toEqual([2, 3]);
-    expect(selectVisibleTimeline(state, 'missing-actor')).toEqual([]);
-  });
-});
+    expect(selectVisibleTimeline(state)).toHaveLength(3)
+    expect(selectVisibleTimeline(state, 'worker-1').map((event) => event.sequence)).toEqual([2, 3])
+    expect(selectVisibleTimeline(state, 'missing-actor')).toEqual([])
+  })
+})

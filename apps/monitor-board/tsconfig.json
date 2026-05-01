@@ -15,13 +15,13 @@
     "types": ["node"],
     "baseUrl": ".",
     "paths": {
-      "@monitor/protocol": ["./src/monitor/protocol/index.ts"],
-      "@monitor/runtime-store": ["./src/monitor/runtime-store/index.ts"],
+      "@monitor/protocol": ["../../skills/monitor/src/protocol/index.ts"],
+      "@monitor/runtime-store": ["../../skills/monitor/src/runtime-store/index.ts"],
       "@monitor/monitor-gateway": ["./src/monitor/gateway/index.ts"],
       "@monitor/monitor-skill": ["./src/monitor/skill/index.ts"],
       "@monitor/host-coco-hook": ["./src/monitor/host-coco/index.ts"],
       "@monitor/host-claude-code-hook": ["./src/monitor/host-claude/index.ts"]
     }
   },
-  "include": ["src/**/*", "vite.config.ts", "vitest.config.ts"]
+  "include": ["src/**/*", "../../skills/monitor/src/**/*", "vite.config.ts", "vitest.config.ts"]
 }

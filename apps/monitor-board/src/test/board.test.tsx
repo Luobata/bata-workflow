@@ -424,7 +424,7 @@ describe('App', () => {
     expect(within(activeTarget).getByText('UI Worker')).toBeInTheDocument();
     expect(within(activeTarget).getByText('Wiring summary and metadata variants')).toBeInTheDocument();
     expect(within(timelineFocusLock).getByText('LOG LOCK · UI WORKER')).toBeInTheDocument();
-    expect(within(timelineFocusLock).getByText('Subagent · BLOCKED · EXECUTION · 63% · lead 1 · subagent 1 · worker 1')).toBeInTheDocument();
+    expect(within(timelineFocusLock).getByText('Subagent · BLOCKED · BOOTING · 10% · lead 1 · subagent 1 · worker 1')).toBeInTheDocument();
     expect(screen.getByText('wired summary and metadata panels')).toBeInTheDocument();
     expect(screen.queryByText('opened Task 8 board shell')).not.toBeInTheDocument();
   });
@@ -454,10 +454,12 @@ describe('App', () => {
   it('shows estimated overall and per-agent progress across the board', () => {
     render(<App initialSnapshot={createSessionSnapshot()} connectSocket={() => { throw new Error('offline'); }} />);
 
-    expect(screen.getByText('Quest 62%')).toBeInTheDocument();
-    expect(screen.getByText('Progress 82%')).toBeInTheDocument();
-    expect(screen.getByText('Progress 63%')).toBeInTheDocument();
-    expect(screen.getByText('Progress 42%')).toBeInTheDocument();
+    expect(screen.getByText('Quest 10%')).toBeInTheDocument();
+    // Active/blocked actors are visible by default
+    expect(screen.getByText('Progress 15%')).toBeInTheDocument();
+    expect(screen.getByText('Progress 10%')).toBeInTheDocument();
+    // Idle actors are collapsed into a summary row
+    expect(screen.getByText('1 completed · click to expand')).toBeInTheDocument();
   });
 
   it('switches to a progress board tab with quest stage and per-agent stages', () => {
@@ -469,9 +471,7 @@ describe('App', () => {
 
     expect(screen.getByRole('heading', { name: 'PROGRESS BOARD' })).toBeInTheDocument();
     expect(screen.getByText('Quest Stage')).toBeInTheDocument();
-    expect(screen.getAllByText('Execution').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Wrapping').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Scouting').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Booting').length).toBeGreaterThanOrEqual(2);
   });
 
   it('does not render EVT sequence labels in timeline rows', () => {

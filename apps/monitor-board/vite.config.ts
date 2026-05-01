@@ -1,6 +1,6 @@
 import { fileURLToPath, URL } from 'node:url';
 import { resolve } from 'node:path';
-import { appendFile, mkdir, readFile } from 'node:fs/promises';
+import { appendFile, mkdir, readdir, readFile } from 'node:fs/promises';
 import { defineConfig, type Plugin, type ViteDevServer } from 'vite';
 
 import { buildBataWorkflowSnapshots, createGatewayServer } from './src/monitor/gateway';
@@ -11,30 +11,43 @@ const stateRoot = process.env.BATA_WORKFLOW_STATE_ROOT
   : process.env.MONITOR_STATE_ROOT
     ? resolve(process.env.MONITOR_STATE_ROOT)
     : resolve(repoRoot, '.bata-workflow', 'state');
-const gatewayPort = Number.parseInt(process.env.MONITOR_GATEWAY_PORT ?? '8787', 10);
-const monitorBoardRuntimeStatePath = resolve(stateRoot, 'monitor-board', 'runtime.json');
+const gatewayPort = Number.parseInt(process.env.MONITOR_GATEWAY_PORT ?? '9000', 10);
+const monitorBoardRuntimeStateDir = resolve(stateRoot, 'monitor-board');
 const monitorBoardLogFilePath = resolve(stateRoot, 'monitor-logs', 'monitor-board.log');
 const monitorSyncTimeoutMs = Number.parseInt(process.env.MONITOR_SYNC_TIMEOUT_MS ?? '5000', 10);
 const monitorIdleExitGraceMs = Number.parseInt(process.env.MONITOR_IDLE_EXIT_GRACE_MS ?? '1500', 10);
 
 const readTrackedSessionCount = async (): Promise<number | null> => {
   try {
-    const runtimeState = JSON.parse(await readFile(monitorBoardRuntimeStatePath, 'utf8')) as {
-      activeRootSessionIds?: unknown;
-    };
+    // Read all runtime-*.json files and aggregate activeRootSessionIds
+    const entries = await readdir(monitorBoardRuntimeStateDir);
+    const runtimeFiles = entries.filter((name) => name.startsWith('runtime-') && name.endsWith('.json'));
 
-    if (!Array.isArray(runtimeState.activeRootSessionIds)) {
-      return 0;
+    // Also check legacy runtime.json for backward compatibility
+    const legacyFile = entries.find((name) => name === 'runtime.json');
+    if (legacyFile) {
+      runtimeFiles.push(legacyFile);
     }
 
-    return [...new Set(runtimeState.activeRootSessionIds.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0))].length;
+    let totalActiveCount = 0;
+
+    for (const fileName of runtimeFiles) {
+      try {
+        const content = await readFile(resolve(monitorBoardRuntimeStateDir, fileName), 'utf8');
+        const runtimeState = JSON.parse(content) as { activeRootSessionIds?: unknown };
+
+        if (Array.isArray(runtimeState.activeRootSessionIds)) {
+          totalActiveCount += runtimeState.activeRootSessionIds.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0).length;
+        }
+      } catch {
+        // Skip corrupted or unreadable runtime files.
+      }
+    }
+
+    return totalActiveCount;
   } catch (error) {
     if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
       return 0;
-    }
-
-    if (error instanceof SyntaxError) {
-      return null;
     }
 
     return null;
@@ -90,7 +103,7 @@ const createHarnessGatewayPlugin = (): Plugin => ({
       );
     });
 
-    const gateway = createGatewayServer(Number.isInteger(gatewayPort) && gatewayPort > 0 ? gatewayPort : 8787);
+    const gateway = createGatewayServer(Number.isInteger(gatewayPort) && gatewayPort > 0 ? gatewayPort : 9000);
     let disposed = false;
     let syncing = false;
     let shuttingDown = false;
@@ -150,11 +163,24 @@ const createHarnessGatewayPlugin = (): Plugin => ({
       }
     };
 
-    const timer = setInterval(() => {
-      void syncSnapshots();
-    }, 500);
+    const DEFAULT_SYNC_INTERVAL_MS = 2000;
+    let syncTimer: ReturnType<typeof setTimeout> | null = null;
 
-    void syncSnapshots();
+    const scheduleNextSync = () => {
+      if (disposed || shuttingDown) {
+        return;
+      }
+
+      syncTimer = setTimeout(() => {
+        void syncSnapshots().finally(() => {
+          scheduleNextSync();
+        });
+      }, DEFAULT_SYNC_INTERVAL_MS);
+    };
+
+    void syncSnapshots().finally(() => {
+      scheduleNextSync();
+    });
 
     const dispose = () => {
       if (disposed) {
@@ -162,7 +188,10 @@ const createHarnessGatewayPlugin = (): Plugin => ({
       }
 
       disposed = true;
-      clearInterval(timer);
+      if (syncTimer !== null) {
+        clearTimeout(syncTimer);
+        syncTimer = null;
+      }
       gateway.server.close(() => undefined);
     };
 
@@ -174,8 +203,8 @@ export default defineConfig({
   plugins: [createHarnessGatewayPlugin()],
   resolve: {
     alias: {
-      '@monitor/protocol': fileURLToPath(new URL('./src/monitor/protocol/index.ts', import.meta.url)),
-      '@monitor/runtime-store': fileURLToPath(new URL('./src/monitor/runtime-store/index.ts', import.meta.url)),
+      '@monitor/protocol': fileURLToPath(new URL('../../skills/monitor/src/protocol/index.ts', import.meta.url)),
+      '@monitor/runtime-store': fileURLToPath(new URL('../../skills/monitor/src/runtime-store/index.ts', import.meta.url)),
       '@monitor/monitor-gateway': fileURLToPath(new URL('./src/monitor/gateway/index.ts', import.meta.url)),
       '@monitor/monitor-skill': fileURLToPath(new URL('./src/monitor/skill/index.ts', import.meta.url)),
       '@monitor/host-coco-hook': fileURLToPath(new URL('./src/monitor/host-coco/index.ts', import.meta.url)),

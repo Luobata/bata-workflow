@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { buildBataWorkflowSnapshots } from './bata-workflow-live';
+import { buildBataWorkflowSnapshots } from './index';
 
 const tempRoots: string[] = [];
 
