@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
@@ -75,7 +76,8 @@ async function readRuntimeState(runtimeStatePath) {
     }
 
     if (error instanceof SyntaxError) {
-      return null
+      console.warn(`[monitor] corrupted JSON file detected: ${runtimeStatePath} (${error.message})`)
+      throw error
     }
 
     throw error
@@ -85,7 +87,7 @@ async function readRuntimeState(runtimeStatePath) {
 async function writeRuntimeState(runtimeStatePath, state) {
   await mkdir(dirname(runtimeStatePath), { recursive: true })
 
-  const tempFilePath = `${runtimeStatePath}.${process.pid}.${Date.now()}.tmp`
+  const tempFilePath = `${runtimeStatePath}.${process.pid}.${randomUUID()}.tmp`
   const payload = `${JSON.stringify(state, null, 2)}\n`
 
   await writeFile(tempFilePath, payload, 'utf8')
@@ -289,9 +291,14 @@ export function createMonitorBoardLaunchSpec({ repoRoot, host, port }) {
 async function defaultCleanupProcess({ child, pid }) {
   if (Number.isInteger(pid) && pid > 0 && process.platform !== 'win32') {
     try {
+      // Signal 0 checks if the process exists without actually sending a signal.
+      // This prevents killing a recycled PID that belongs to an unrelated process.
+      process.kill(pid, 0)
       process.kill(-pid, 'SIGTERM')
       return
-    } catch {}
+    } catch {
+      // Process no longer exists or permission denied — nothing to clean up.
+    }
   }
 
   if (typeof child?.kill === 'function') {

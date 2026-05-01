@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
@@ -17,7 +18,7 @@ export async function readMonitorSessionState(stateFilePath) {
 export async function writeMonitorSessionState(stateFilePath, state) {
   await mkdir(dirname(stateFilePath), { recursive: true })
 
-  const tempFilePath = `${stateFilePath}.${process.pid}.${Date.now()}.tmp`
+  const tempFilePath = `${stateFilePath}.${process.pid}.${randomUUID()}.tmp`
   const payload = `${JSON.stringify(state, null, 2)}\n`
 
   await writeFile(tempFilePath, payload, 'utf8')

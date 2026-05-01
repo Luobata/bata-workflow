@@ -58,7 +58,8 @@ const readJsonFile = async (filePath) => {
     }
 
     if (error instanceof SyntaxError) {
-      return null
+      console.warn(`[monitor] corrupted JSON file detected: ${filePath} (${error.message})`)
+      throw error
     }
 
     throw error

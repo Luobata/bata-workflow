@@ -84,6 +84,57 @@ node invoke-ralph.mjs --cwd "$TEST_DIR" --resume --execute --stubAgent
 
 ## Task Splitting Verification
 
+### Complexity-Based Differentiation
+
+Ralph automatically assesses the complexity of goal descriptions and adjusts task generation strategy:
+
+#### Simple Goal (score < 4)
+- **Triggers**: Short descriptions (< 50 chars), few sentences, no complexity keywords
+- **Task count**: 1-2 tasks maximum
+- **No analysis phase**: Implementation starts directly
+- **No global validation**: Skips final regression task
+- **No reviewContract**: Lighter weight processing
+
+Example:
+```bash
+node invoke-ralph.mjs --cwd "$TEST_DIR" --goal "修复登录bug" --dryRunPlan
+```
+Expected: 1-2 tasks, implementation + basic verification
+
+#### Medium Goal (score 4-7)
+- **Triggers**: Moderate length (50-200 chars), 2-3 sentences, some technical terms
+- **Task count**: Up to 3 topics
+- **Full pipeline**: Analysis → Implementation → Validation
+- **With reviewContract**: Standard processing
+
+Example:
+```bash
+node invoke-ralph.mjs --cwd "$TEST_DIR" --goal "实现用户认证模块，包括登录、注册、密码重置功能" --dryRunPlan
+```
+Expected: 5-7 tasks, full pipeline with reviewContract
+
+#### Complex Goal (score >= 8)
+- **Triggers**: Long descriptions (> 200 chars), many sentences, complexity keywords
+- **Task count**: Up to 5 topics
+- **Enhanced pipeline**: Detailed analysis, fine-grained tasks
+- **With reviewContract**: Comprehensive processing
+
+Example:
+```bash
+node invoke-ralph.mjs --cwd "$TEST_DIR" --goal "重构支付系统架构，需要集成第三方支付网关，优化并发性能，确保分布式事务一致性，支持多币种和退款流程" --dryRunPlan
+```
+Expected: 9-11 tasks, enhanced pipeline with detailed reviewContract
+
+### Complexity Assessment Factors
+
+| Factor | Weight | Thresholds |
+|--------|--------|------------|
+| Character count | 1-3 pts | >50: +1, >100: +2, >200: +3 |
+| Fragment count | 1-3 pts | 2+: +1, 3+: +2, 5+: +3 |
+| Complexity keywords | 2 pts | refactor, architecture, optimize, etc. |
+| Technical terms | 1-2 pts | API, database, cache, queue, protocol |
+| Detail indicators | 1 pt | "需要", "要求", "包括", "步骤" |
+
 ### Goal-Driven Mode
 
 ```bash

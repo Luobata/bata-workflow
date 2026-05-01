@@ -108,9 +108,11 @@ const createHarnessGatewayPlugin = (): Plugin => ({
         latestActiveTrackedSessionAt,
       });
       dispose();
-      globalThis.setTimeout(() => {
-        process.exit(0);
-      }, 0);
+      // Use process.exitCode instead of process.exit(0) to allow the Vite dev
+      // server's own shutdown handlers to run, including WebSocket close
+      // handshakes and temp file cleanup from atomic writes.
+      process.exitCode = 0;
+      server.httpServer?.close();
     };
 
     const syncSnapshots = async () => {

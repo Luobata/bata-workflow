@@ -199,61 +199,276 @@ export const defaultTodoBuilder = async ({ goal, path, dir, cwd }) => {
 }
 
 /**
- * Build Goal Driven Tasks - 构建目标驱动任务
+ * Assess Goal Complexity - 评估目标复杂度
+ * 
+ * 根据描述长度、分句数量、关键词等评估复杂度
+ * 返回: 'simple' | 'medium' | 'complex'
+ */
+const assessGoalComplexity = (goal) => {
+  if (!goal || goal.trim().length === 0) {
+    return 'simple'
+  }
+
+  const trimmedGoal = goal.trim()
+  
+  // 1. 字数评估
+  const charCount = trimmedGoal.length
+  
+  // 2. 分句数量
+  const fragments = trimmedGoal
+    .split(/[，,。；;\n]/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+  const fragmentCount = fragments.length
+  
+  // 3. 关键词检测
+  const complexityKeywords = [
+    /重构|refactor/i,
+    /架构|architecture/i,
+    /性能优化|optimize|performance/i,
+    /集成|integrate/i,
+    /多模块|multi-module/i,
+    /微服务|microservice/i,
+    /安全|security/i,
+    /并发|concurrent/i,
+    /分布式|distributed/i,
+  ]
+  const hasComplexKeywords = complexityKeywords.some(pattern => pattern.test(trimmedGoal))
+  
+  // 4. 技术术语检测
+  const techTerms = [
+    /api|接口/i,
+    /database|数据库/i,
+    /cache|缓存/i,
+    /queue|队列/i,
+    /protocol|协议/i,
+    /algorithm|算法/i,
+  ]
+  const techTermCount = techTerms.filter(pattern => pattern.test(trimmedGoal)).length
+  
+  // 5. 详细程度检测
+  const hasDetails = /需要|要求|包括|包含|步骤|阶段|模块|组件|功能|特性/i.test(trimmedGoal)
+  
+  // 综合评估
+  let score = 0
+  
+  // 字数评分
+  if (charCount > 200) score += 3
+  else if (charCount > 100) score += 2
+  else if (charCount > 50) score += 1
+  
+  // 分句评分
+  if (fragmentCount >= 5) score += 3
+  else if (fragmentCount >= 3) score += 2
+  else if (fragmentCount >= 2) score += 1
+  
+  // 关键词评分
+  if (hasComplexKeywords) score += 2
+  
+  // 技术术语评分
+  if (techTermCount >= 3) score += 2
+  else if (techTermCount >= 1) score += 1
+  
+  // 详细程度评分
+  if (hasDetails) score += 1
+  
+  // 返回复杂度等级
+  if (score >= 8) return 'complex'
+  if (score >= 4) return 'medium'
+  return 'simple'
+}
+
+/**
+ * Build Goal Driven Tasks - 构建目标驱动任务（带复杂度差异化）
  */
 const buildGoalDrivenTasks = ({ normalizedGoal, verificationCommands, e2eCommands }) => {
+  // 评估复杂度
+  const complexity = assessGoalComplexity(normalizedGoal)
+  
   const fragments = normalizedGoal
     .split(/[，,。；;\n]/)
     .map((item) => item.trim())
     .filter(Boolean)
 
   const concreteFragments = fragments.length > 0 ? fragments : ['理解需求并拆解实现步骤']
-  const topFragments = concreteFragments.slice(0, 3)
+  
+  // 根据复杂度调整任务数量
+  let maxTopics = 3
+  let includeAnalysisPhase = true
+  let includeGlobalValidation = true
+  let generateReviewContract = false
+  
+  switch (complexity) {
+    case 'simple':
+      maxTopics = Math.min(2, concreteFragments.length)
+      includeAnalysisPhase = false  // 简单任务不需要分析阶段
+      includeGlobalValidation = false  // 简单任务不需要全局验证
+      generateReviewContract = false
+      break
+    case 'medium':
+      maxTopics = Math.min(3, concreteFragments.length)
+      includeAnalysisPhase = true
+      includeGlobalValidation = true
+      generateReviewContract = true
+      break
+    case 'complex':
+      maxTopics = Math.min(5, concreteFragments.length)  // 复杂任务允许更多主题
+      includeAnalysisPhase = true
+      includeGlobalValidation = true
+      generateReviewContract = true
+      break
+  }
+  
+  const topFragments = concreteFragments.slice(0, maxTopics)
   const tasks = []
+  let previousTaskId = null
 
-  const analysisTask = pushDetailedTask({
-    tasks,
-    title: `子任务1: 需求澄清与影响面分析（${topFragments[0]}）`,
-    deps: [],
-    phase: 'analysis',
-    verificationCommands,
-  })
+  // 分析阶段（仅中、复杂度任务）
+  if (includeAnalysisPhase) {
+    const analysisTask = pushDetailedTask({
+      tasks,
+      title: `子任务1: 需求澄清与影响面分析（${topFragments[0]}）`,
+      deps: [],
+      phase: 'analysis',
+      verificationCommands,
+    })
+    previousTaskId = analysisTask.id
+    
+    // 为复杂任务生成 reviewContract
+    if (generateReviewContract) {
+      analysisTask.reviewContract = {
+        reviewFocus: {
+          primary: ['检查需求理解是否准确', '确认影响面分析是否完整'],
+          secondary: ['识别潜在风险点'],
+          riskAreas: ['需求理解偏差', '影响面遗漏'],
+        },
+        riskPoints: [
+          { category: 'correctness', description: '需求理解偏差', severity: 'medium' },
+        ],
+        testRequirements: [
+          { type: 'review', description: '需求确认', priority: 'must', relatedAcceptance: (analysisTask.acceptance ?? []).slice(0, 1) },
+        ],
+        acceptanceCriteria: (analysisTask.acceptance ?? []).map((acc, i) => ({
+          id: `acc-${i + 1}`,
+          description: acc,
+          verification: 'review',
+          priority: 'must',
+        })),
+        generatedAt: new Date().toISOString(),
+      }
+    }
+  }
 
-  let previousTaskId = analysisTask.id
-
+  // 实现阶段
   for (let index = 0; index < topFragments.length; index += 1) {
     const fragment = topFragments[index]
+    const deps = previousTaskId ? [previousTaskId] : []
+    
     const implementationTask = pushDetailedTask({
       tasks,
       title: `子任务${tasks.length + 1}: 实现推进 - ${fragment}`,
-      deps: [previousTaskId],
+      deps,
       phase: 'implementation',
       verificationCommands,
       topic: fragment,
     })
+    
+    // 为中等/复杂任务生成 reviewContract
+    if (generateReviewContract) {
+      implementationTask.reviewContract = {
+        reviewFocus: {
+          primary: [`检查 ${fragment} 实现是否正确`],
+          secondary: ['代码质量检查'],
+          riskAreas: [],
+        },
+        riskPoints: [],
+        testRequirements: [
+          { type: 'unit', description: '单元测试', priority: 'must', relatedAcceptance: (implementationTask.acceptance ?? []).slice(0, 1) },
+        ],
+        acceptanceCriteria: (implementationTask.acceptance ?? []).map((acc, i) => ({
+          id: `acc-${i + 1}`,
+          description: acc,
+          verification: 'review',
+          priority: 'must',
+        })),
+        generatedAt: new Date().toISOString(),
+      }
+    }
 
-    const validationTask = pushDetailedTask({
+    // 验证阶段（简单任务合并到实现任务中）
+    if (complexity !== 'simple') {
+      const validationTask = pushDetailedTask({
+        tasks,
+        title: `子任务${tasks.length + 1}: 验证闭环 - ${fragment}`,
+        deps: [implementationTask.id],
+        phase: 'validation',
+        verificationCommands,
+        e2eCommands,
+        topic: fragment,
+      })
+      
+      if (generateReviewContract) {
+        validationTask.reviewContract = {
+          reviewFocus: {
+            primary: [`验证 ${fragment} 是否满足验收标准`],
+            secondary: ['检查测试覆盖'],
+            riskAreas: [],
+          },
+          riskPoints: [],
+          testRequirements: [
+            { type: 'unit', description: '单元测试', priority: 'must', relatedAcceptance: [] },
+          ],
+          acceptanceCriteria: (validationTask.acceptance ?? []).map((acc, i) => ({
+            id: `acc-${i + 1}`,
+            description: acc,
+            verification: 'automated',
+            priority: 'must',
+          })),
+          generatedAt: new Date().toISOString(),
+        }
+      }
+
+      previousTaskId = validationTask.id
+    } else {
+      previousTaskId = implementationTask.id
+    }
+  }
+
+  // 全局验证（仅中、复杂度任务）
+  if (includeGlobalValidation && previousTaskId) {
+    const finalTask = pushDetailedTask({
       tasks,
-      title: `子任务${tasks.length + 1}: 验证闭环 - ${fragment}`,
-      deps: [implementationTask.id],
+      title: `子任务${tasks.length + 1}: 全局回归验证与e2e检查`,
+      deps: [previousTaskId],
       phase: 'validation',
       verificationCommands,
       e2eCommands,
-      topic: fragment,
+      topic: '全局回归验证',
     })
-
-    previousTaskId = validationTask.id
+    
+    if (generateReviewContract) {
+      finalTask.reviewContract = {
+        reviewFocus: {
+          primary: ['全局功能验证', '回归测试'],
+          secondary: ['性能检查'],
+          riskAreas: ['回归问题', '性能退化'],
+        },
+        riskPoints: [
+          { category: 'correctness', description: '回归问题', severity: 'medium' },
+        ],
+        testRequirements: [
+          { type: 'integration', description: '集成测试', priority: 'must', relatedAcceptance: [] },
+        ],
+        acceptanceCriteria: (finalTask.acceptance ?? []).map((acc, i) => ({
+          id: `acc-${i + 1}`,
+          description: acc,
+          verification: 'automated',
+          priority: 'must',
+        })),
+        generatedAt: new Date().toISOString(),
+      }
+    }
   }
-
-  pushDetailedTask({
-    tasks,
-    title: `子任务${tasks.length + 1}: 全局回归验证与e2e检查`,
-    deps: [previousTaskId],
-    phase: 'validation',
-    verificationCommands,
-    e2eCommands,
-    topic: '全局回归验证',
-  })
 
   return tasks
 }

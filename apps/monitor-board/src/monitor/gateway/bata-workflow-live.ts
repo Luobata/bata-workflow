@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { appendFile, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
@@ -240,7 +241,8 @@ const readJsonFile = async <T>(filePath: string): Promise<T | null> => {
     }
 
     if (error instanceof SyntaxError) {
-      return null;
+      console.warn(`[monitor-board] corrupted JSON file detected: ${filePath} (${error.message})`);
+      throw error;
     }
 
     throw error;
@@ -249,7 +251,7 @@ const readJsonFile = async <T>(filePath: string): Promise<T | null> => {
 
 const writeJsonFileAtomic = async (filePath: string, value: unknown): Promise<void> => {
   await mkdir(resolve(filePath, '..'), { recursive: true });
-  const tempFilePath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  const tempFilePath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
   await writeFile(tempFilePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
   await rename(tempFilePath, filePath);
 };
