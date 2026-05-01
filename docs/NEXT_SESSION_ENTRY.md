@@ -27,25 +27,25 @@
 
 - 先看 `git status`
 - 确认当前工作区是否只有交接文档改动，还是还存在其他未提交实现
-- 如果要继续编码，优先保持在 `harness` 仓库内操作：
-  - `/Users/bytedance/luobata/bata-skill/harness`
+- 如果要继续编码，优先保持在 `bata-workflow` 仓库内操作：
+  - `/Users/bytedance/luobata/bata-skill/bata-workflow/apps/bata-workflow`
 
 ## 第五步：验证命令
 
 实现完成后至少运行：
 
 ```bash
-pnpm --dir "/Users/bytedance/luobata/bata-skill/harness" test -- watch-command watch-state
-pnpm --dir "/Users/bytedance/luobata/bata-skill/harness" build
+pnpm --dir "/Users/bytedance/luobata/bata-skill/bata-workflow/apps/bata-workflow" test -- watch-command watch-state
+pnpm --dir "/Users/bytedance/luobata/bata-skill/bata-workflow/apps/bata-workflow" build
 ```
 
 如果涉及运行链路，再补：
 
 ```bash
-pnpm --dir "/Users/bytedance/luobata/bata-skill/harness" dev /harness-debug --adapter=dry-run -dir <docs>
-pnpm --dir "/Users/bytedance/luobata/bata-skill/harness" dev watch --reportPath <report.json>
+pnpm --dir "/Users/bytedance/luobata/bata-skill/bata-workflow/apps/bata-workflow" dev /bata-workflow-debug --adapter=dry-run -dir <docs>
+pnpm --dir "/Users/bytedance/luobata/bata-skill/bata-workflow/apps/bata-workflow" dev watch --reportPath <report.json>
 ```
 
 ## 给新会话的一句话提示
 
-当前系统已经有：`/harness-debug` 文档驱动入口、`watch` 终端 TUI、任务详情、协作链路面板，以及为方案 B 预留的 `detailMode` 扩展位；不要回头重做 watch 基础，直接往 **detailMode 切换、产物/验证证据可视化、结构化执行结果展示** 继续推进。
+当前系统已经有：`/bata-workflow-debug` 文档驱动入口、`watch` 终端 TUI、任务详情、协作链路面板，以及为方案 B 预留的 `detailMode` 扩展位；不要回头重做 watch 基础，直接往 **detailMode 切换、产物/验证证据可视化、结构化执行结果展示** 继续推进。

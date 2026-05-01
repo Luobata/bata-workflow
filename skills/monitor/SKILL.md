@@ -58,3 +58,27 @@ The `board` object follows this contract:
 5. If the Bash call fails, report the failure output directly instead of hanging or waiting.
 6. Do not auto-open monitor-board, a browser, or any viewer UI.
 7. Do not create nested monitor sessions.
+
+## Reliability Rules (AI-facing)
+
+1. `/monitor` invocation must be bounded-time: never block indefinitely waiting for board startup.
+2. If board startup fails or times out, return failure details immediately (`board.status=failed`, `board.message`).
+3. Repeated `/monitor` should reuse existing session/board whenever identity matches; do not spawn duplicate boards.
+4. Keep session-targeted URL semantics stable: always return URL scoped by `monitorSessionId` when `board.url` exists.
+5. Treat “session disconnected” as explicit state, not success and not silent fallback.
+
+## Quick Test Method
+
+After changing monitor runtime behavior, run at least:
+
+```bash
+pnpm --dir apps/bata-workflow test monitor-skill-runtime.test.ts
+pnpm --dir apps/bata-workflow test monitor-board-launcher.test.ts
+pnpm --dir apps/bata-workflow test run-session.test.ts
+```
+
+After changing monitor board UI/live gateway behavior, run at least:
+
+```bash
+pnpm --dir apps/monitor-board test src/monitor/gateway/bata-workflow-live.test.ts src/test/board.test.tsx
+```

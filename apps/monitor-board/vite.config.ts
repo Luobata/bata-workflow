@@ -1,19 +1,80 @@
 import { fileURLToPath, URL } from 'node:url';
 import { resolve } from 'node:path';
+import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import { defineConfig, type Plugin, type ViteDevServer } from 'vite';
 
-import { buildHarnessSnapshots, createGatewayServer } from './src/monitor/gateway';
+import { buildBataWorkflowSnapshots, createGatewayServer } from './src/monitor/gateway';
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
-const stateRoot = process.env.HARNESS_STATE_ROOT
-  ? resolve(process.env.HARNESS_STATE_ROOT)
+const stateRoot = process.env.BATA_WORKFLOW_STATE_ROOT
+  ? resolve(process.env.BATA_WORKFLOW_STATE_ROOT)
   : process.env.MONITOR_STATE_ROOT
     ? resolve(process.env.MONITOR_STATE_ROOT)
-    : resolve(repoRoot, '.harness', 'state');
+    : resolve(repoRoot, '.bata-workflow', 'state');
 const gatewayPort = Number.parseInt(process.env.MONITOR_GATEWAY_PORT ?? '8787', 10);
+const monitorBoardRuntimeStatePath = resolve(stateRoot, 'monitor-board', 'runtime.json');
+const monitorBoardLogFilePath = resolve(stateRoot, 'monitor-logs', 'monitor-board.log');
+const monitorSyncTimeoutMs = Number.parseInt(process.env.MONITOR_SYNC_TIMEOUT_MS ?? '5000', 10);
+const monitorIdleExitGraceMs = Number.parseInt(process.env.MONITOR_IDLE_EXIT_GRACE_MS ?? '1500', 10);
+
+const readTrackedSessionCount = async (): Promise<number | null> => {
+  try {
+    const runtimeState = JSON.parse(await readFile(monitorBoardRuntimeStatePath, 'utf8')) as {
+      activeRootSessionIds?: unknown;
+    };
+
+    if (!Array.isArray(runtimeState.activeRootSessionIds)) {
+      return 0;
+    }
+
+    return [...new Set(runtimeState.activeRootSessionIds.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0))].length;
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+      return 0;
+    }
+
+    if (error instanceof SyntaxError) {
+      return null;
+    }
+
+    return null;
+  }
+};
+
+const withSyncTimeout = async <T>(promise: Promise<T>): Promise<T> => {
+  if (!Number.isInteger(monitorSyncTimeoutMs) || monitorSyncTimeoutMs <= 0) {
+    return await promise;
+  }
+
+  return await Promise.race([
+    promise,
+    new Promise<T>((_resolve, reject) => {
+      globalThis.setTimeout(() => {
+        reject(new Error(`live snapshot sync timed out after ${monitorSyncTimeoutMs}ms`));
+      }, monitorSyncTimeoutMs);
+    }),
+  ]);
+};
+
+const writeMonitorBoardLifecycleLog = async (event: string, data: Record<string, unknown> = {}): Promise<void> => {
+  const payload = {
+    ts: new Date().toISOString(),
+    pid: process.pid,
+    source: 'monitor-board.vite',
+    event,
+    data,
+  };
+
+  try {
+    await mkdir(resolve(monitorBoardLogFilePath, '..'), { recursive: true });
+    await appendFile(monitorBoardLogFilePath, `${JSON.stringify(payload)}\n`, 'utf8');
+  } catch {
+    // Keep logging best-effort.
+  }
+};
 
 const createHarnessGatewayPlugin = (): Plugin => ({
-  name: 'monitor-board-harness-gateway',
+  name: 'monitor-board-bata-workflow-gateway',
   configureServer(server: ViteDevServer) {
     server.middlewares.use('/__monitor_board_identity', (_request, response) => {
       response.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -32,19 +93,56 @@ const createHarnessGatewayPlugin = (): Plugin => ({
     const gateway = createGatewayServer(Number.isInteger(gatewayPort) && gatewayPort > 0 ? gatewayPort : 8787);
     let disposed = false;
     let syncing = false;
+    let shuttingDown = false;
+    let hasSeenTrackedSessions = false;
+    let latestActiveTrackedSessionAt = Date.now();
+
+    const shutdownIfNoTrackedSession = () => {
+      if (disposed || shuttingDown) {
+        return;
+      }
+
+      shuttingDown = true;
+      server.config.logger.info('[monitor-board] no tracked monitor sessions remain; shutting down board process');
+      void writeMonitorBoardLifecycleLog('board.shutdown_no_tracked_sessions', {
+        latestActiveTrackedSessionAt,
+      });
+      dispose();
+      globalThis.setTimeout(() => {
+        process.exit(0);
+      }, 0);
+    };
 
     const syncSnapshots = async () => {
-      if (disposed || syncing) {
+      if (disposed || syncing || shuttingDown) {
         return;
       }
 
       syncing = true;
 
       try {
-        gateway.replaceSnapshots(await buildHarnessSnapshots(stateRoot));
+        const snapshots = await withSyncTimeout(buildBataWorkflowSnapshots(stateRoot));
+        gateway.replaceSnapshots(snapshots);
+
+        const trackedSessionCount = await readTrackedSessionCount();
+        if (trackedSessionCount !== null && trackedSessionCount > 0) {
+          hasSeenTrackedSessions = true;
+          latestActiveTrackedSessionAt = Date.now();
+        }
+
+        if (
+          hasSeenTrackedSessions
+          && trackedSessionCount === 0
+          && Date.now() - latestActiveTrackedSessionAt >= Math.max(0, monitorIdleExitGraceMs)
+        ) {
+          shutdownIfNoTrackedSession();
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        server.config.logger.warn(`[monitor-board] failed to sync live harness snapshots: ${message}`);
+        server.config.logger.warn(`[monitor-board] failed to sync live bata-workflow snapshots: ${message}`);
+        void writeMonitorBoardLifecycleLog('snapshot.sync_failed', {
+          message,
+        });
       } finally {
         syncing = false;
       }

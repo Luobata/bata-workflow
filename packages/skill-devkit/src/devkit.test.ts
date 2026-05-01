@@ -138,7 +138,7 @@ const createManifest = (overrides: Partial<ManifestInput> = {}): ManifestInput =
     publishLocal: true,
   },
   metadata: {
-    description: 'Local monitor board skill for harness development',
+    description: 'Local monitor board skill for bata-workflow development',
     tags: ['monitor', 'local-dev'],
   },
   ...overrides,

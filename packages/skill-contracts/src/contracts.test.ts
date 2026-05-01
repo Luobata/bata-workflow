@@ -56,7 +56,7 @@ const createValidManifest = (overrides: Record<string, unknown> = {}) => ({
     publishLocal: true,
   },
   metadata: {
-    description: 'Local monitor skill for harness development',
+    description: 'Local monitor skill for bata-workflow development',
     tags: ['monitor', 'local-dev'],
   },
   ...overrides,
@@ -216,7 +216,7 @@ describe('SkillManifestSchema', () => {
       SkillManifestSchema.parse(
         createValidManifest({
           metadata: {
-            description: 'Local monitor skill for harness development',
+            description: 'Local monitor skill for bata-workflow development',
             tags: ['monitor', 'local-dev'],
             extra: true,
           },

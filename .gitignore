@@ -99,8 +99,8 @@ jspm_packages/
 !.vscode/launch.json
 
 # Harness local state and worktrees
-.harness/state/
-.harness/skill-packs/
+.bata-workflow/state/
+.bata-workflow/skill-packs/
 .worktrees/
 **/.omc/
 

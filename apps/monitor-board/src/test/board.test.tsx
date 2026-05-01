@@ -247,7 +247,7 @@ const createShellSnapshot = (monitorSessionId = 'monitor:shell-live'): SessionSn
           currentAction: 'awaiting runtime data',
           timelineLabel: 'awaiting runtime data',
         },
-        tags: ['harness-runtime', 'session-shell'],
+        tags: ['bata-workflow-runtime', 'session-shell'],
         severity: 'info',
         monitorEnabled: true,
         monitorInherited: false,

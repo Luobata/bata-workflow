@@ -1,0 +1,16 @@
+{
+  "name": "ralph",
+  "displayName": "Ralph",
+  "entry": "SKILL.md",
+  "cocoInstallName": "ralph",
+  "version": "0.1.0",
+  "files": ["skill-manifest.json", "SKILL.md", "runtime/**/*.mjs"],
+  "dev": {
+    "link": true,
+    "publishLocal": true
+  },
+  "metadata": {
+    "description": "Orchestrate coding/review multi-agent execution with resumable .ralph state and review advice persistence",
+    "tags": ["orchestration", "subagent", "resume", "e2e"]
+  }
+}

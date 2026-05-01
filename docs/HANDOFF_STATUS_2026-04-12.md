@@ -1,11 +1,11 @@
-# Harness 交接记录（2026-04-12）
+# Bata-Workflow 交接记录（2026-04-12）
 
 ## 1. 当前结论
 
-- 当前仓库路径：`/Users/bytedance/luobata/bata-skill/harness`
+- 当前仓库路径：`/Users/bytedance/luobata/bata-skill/bata-workflow`
 - 当前代码状态：**已完成 watch 终端 TUI 的三轮迭代**，从基础运行监控推进到“任务详情 + 协作链路”阶段。
 - 当前最重要的新能力：
-  - `/harness-debug` 正式入口与 `--dir/--target` 文档驱动规划
+  - `/bata-workflow-debug` 正式入口与 `--dir/--target` 文档驱动规划
   - `watch` 命令与只读终端 TUI
   - `Workers | Hot Tasks | Task Details | Recent Events` 三栏监控
   - `selectedTask` 排障详情与协作链路（mailbox / upstream / handoff）
@@ -22,7 +22,7 @@
 - `-dir` / `-target` 目录与文件输入
 - 文本文件过滤与常见构建目录忽略
 - 方案文档 checklist / bullet -> 细粒度任务拆解
-- `/harness-debug` 正式入口与旧拼写 `/harndess-debug` 兼容
+- `/bata-workflow-debug` 正式入口与旧拼写 `/harndess-debug` 兼容
 
 关键文件：
 
@@ -37,7 +37,7 @@
 已完成：
 
 - `watch` 命令入口
-- 从 `.harness/state/runs/*` 读取最近或显式指定的 run/report
+- 从 `.bata-workflow/state/runs/*` 读取最近或显式指定的 run/report
 - 顶部总览：`goal / status / batch / counters`
 - `Workers`、`Hot Tasks`、`Recent Events` 只读实时监控
 - 非 TTY 环境自动退化为单次渲染输出
@@ -93,19 +93,19 @@
 ### 3.1 文档驱动调试入口
 
 ```bash
-pnpm --dir "/Users/bytedance/luobata/bata-skill/harness" dev /harness-debug --dir /绝对路径/docs
+pnpm --dir "/Users/bytedance/luobata/bata-skill/bata-workflow/apps/bata-workflow" dev /bata-workflow-debug --dir /绝对路径/docs
 ```
 
 ### 3.2 观察最近一次运行
 
 ```bash
-pnpm --dir "/Users/bytedance/luobata/bata-skill/harness" dev watch
+pnpm --dir "/Users/bytedance/luobata/bata-skill/bata-workflow/apps/bata-workflow" dev watch
 ```
 
 ### 3.3 观察指定报告
 
 ```bash
-pnpm --dir "/Users/bytedance/luobata/bata-skill/harness" dev watch --reportPath /绝对路径/report.json
+pnpm --dir "/Users/bytedance/luobata/bata-skill/bata-workflow/apps/bata-workflow" dev watch --reportPath /绝对路径/report.json
 ```
 
 ### 3.4 watch 快捷键
@@ -126,7 +126,7 @@ pnpm --dir "/Users/bytedance/luobata/bata-skill/harness" dev watch --reportPath 
 - `npm test -- slash-command-loader planner-dispatcher watch-command watch-state`
 - `npm run build`
 - 真实链路冒烟：
-  - `/harness-debug --adapter=dry-run -dir <docs>`
+  - `/bata-workflow-debug --adapter=dry-run -dir <docs>`
   - `watch --reportPath <report.json>`
 
 验证结论：

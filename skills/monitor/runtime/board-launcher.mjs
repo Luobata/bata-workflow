@@ -271,7 +271,7 @@ function defaultSpawnProcess({ repoRoot, host, port, gatewayPort, stateRoot }) {
     stdio: 'ignore',
     env: {
       ...process.env,
-      ...(stateRoot ? { HARNESS_STATE_ROOT: String(stateRoot), MONITOR_STATE_ROOT: String(stateRoot) } : {}),
+      ...(stateRoot ? { BATA_WORKFLOW_STATE_ROOT: String(stateRoot), MONITOR_STATE_ROOT: String(stateRoot) } : {}),
       MONITOR_GATEWAY_PORT: String(gatewayPort),
     },
   })

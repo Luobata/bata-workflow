@@ -17,18 +17,18 @@
 
 用户目标是：
 
-1. 将当前 `harness` 仓库改造成 Rush monorepo
-2. 将 `harness` 和 `tmux-manager` 都纳入新 monorepo，分别作为子项目管理
-3. 使用 `apps/harness + packages/tmux-manager` 作为目录布局
+1. 将当前 `bata-workflow` 仓库改造成 Rush monorepo
+2. 将 `bata-workflow` 和 `tmux-manager` 都纳入新 monorepo，分别作为子项目管理
+3. 使用 `apps/bata-workflow + packages/tmux-manager` 作为目录布局
 
 ## 目标
 
 把当前仓库从单包结构改造成一个以 Rush 作为编排入口、以 pnpm workspace 作为包安装机制的 monorepo，并形成如下稳定结构：
 
 ```text
-harness/
+bata-workflow/
   apps/
-    harness/
+    bata-workflow/
   packages/
     tmux-manager/
   common/
@@ -48,10 +48,10 @@ harness/
 
 本次改造不包含以下范围：
 
-- 不重写 `harness` 的 CLI、runtime、orchestrator、TUI 架构
+- 不重写 `bata-workflow` 的 CLI、runtime、orchestrator、TUI 架构
 - 不重构 `tmux-manager` 的内部 API 与模块边界
 - 不顺带统一所有 TypeScript / Vitest 配置为单一超大配置
-- 不引入除 `harness` 与 `tmux-manager` 之外的新应用或新库包
+- 不引入除 `bata-workflow` 与 `tmux-manager` 之外的新应用或新库包
 - 不处理发布流水线、版本发布策略、CI 平台接入等后续议题
 
 ## 方案选择
@@ -59,7 +59,7 @@ harness/
 本次采用以下方案：
 
 - **直接把当前仓库升级为 monorepo root**，不新建外层容器仓库
-- **当前 `harness` 下沉为 `apps/harness`**
+- **当前 `bata-workflow` 下沉为 `apps/bata-workflow`**
 - **外部 `tmux-manager` 源码迁入 `packages/tmux-manager`**
 
 未采用的方案包括：
@@ -82,11 +82,11 @@ harness/
 - 公共 Rush 配置
 - 保留仓库级文档与工作流资产
 
-根目录不再直接承载 `harness` 应用源码和测试源码。
+根目录不再直接承载 `bata-workflow` 应用源码和测试源码。
 
-### apps/harness
+### apps/bata-workflow
 
-`apps/harness` 是 monorepo 中的应用项目，承接当前仓库根目录的现有 harness 内容。它继续负责：
+`apps/bata-workflow` 是 monorepo 中的应用项目，承接当前仓库根目录的现有 bata-workflow 内容。它继续负责：
 
 - CLI 入口与命令解析
 - planner / dispatcher / orchestrator
@@ -95,15 +95,15 @@ harness/
 
 迁移后，应用源码和测试路径应当落在：
 
-- `apps/harness/src/`
-- `apps/harness/tests/`
-- `apps/harness/configs/`
+- `apps/bata-workflow/src/`
+- `apps/bata-workflow/tests/`
+- `apps/bata-workflow/configs/`
 
 应用级构建与测试配置也随应用一起下沉：
 
-- `apps/harness/package.json`
-- `apps/harness/tsconfig.json`
-- `apps/harness/vitest.config.ts`
+- `apps/bata-workflow/package.json`
+- `apps/bata-workflow/tsconfig.json`
+- `apps/bata-workflow/vitest.config.ts`
 
 ### packages/tmux-manager
 
@@ -126,23 +126,23 @@ harness/
 目标依赖关系是单向的：
 
 ```text
-apps/harness  --->  packages/tmux-manager
+apps/bata-workflow  --->  packages/tmux-manager
 ```
 
 约束如下：
 
-- `apps/harness` 通过包名依赖 `@luobata/tmux-manager`
-- `packages/tmux-manager` 不反向依赖 `harness`
-- 不允许 `apps/harness` 继续通过跨目录相对路径直接 import `tmux-manager` 源文件
+- `apps/bata-workflow` 通过包名依赖 `@luobata/tmux-manager`
+- `packages/tmux-manager` 不反向依赖 `bata-workflow`
+- 不允许 `apps/bata-workflow` 继续通过跨目录相对路径直接 import `tmux-manager` 源文件
 - 包间协作以 workspace dependency 与 Rush project graph 为准
 
-这样做可以保证 `tmux-manager` 是真正可复用的内部库，而 `harness` 保持应用编排角色。
+这样做可以保证 `tmux-manager` 是真正可复用的内部库，而 `bata-workflow` 保持应用编排角色。
 
 ## 迁移清单
 
-### 从仓库根目录移动到 apps/harness
+### 从仓库根目录移动到 apps/bata-workflow
 
-以下内容应整体迁移到 `apps/harness/`：
+以下内容应整体迁移到 `apps/bata-workflow/`：
 
 - `package.json`
 - `src/`
@@ -153,12 +153,12 @@ apps/harness  --->  packages/tmux-manager
 
 迁移后，这些路径分别变为：
 
-- `apps/harness/package.json`
-- `apps/harness/src/`
-- `apps/harness/tests/`
-- `apps/harness/tsconfig.json`
-- `apps/harness/vitest.config.ts`
-- `apps/harness/configs/`
+- `apps/bata-workflow/package.json`
+- `apps/bata-workflow/src/`
+- `apps/bata-workflow/tests/`
+- `apps/bata-workflow/tsconfig.json`
+- `apps/bata-workflow/vitest.config.ts`
+- `apps/bata-workflow/configs/`
 
 ### 从外部目录迁入 packages/tmux-manager
 
@@ -188,7 +188,7 @@ apps/harness  --->  packages/tmux-manager
 - 仓库级说明文档
 - 新增的 monorepo 配置文件
 
-`docs/` 保持在仓库根目录，而不是下沉到 `apps/harness/docs/`。原因是当前 `docs/superpowers/` 明显是仓库工作流资产，不只服务于应用运行时。
+`docs/` 保持在仓库根目录，而不是下沉到 `apps/bata-workflow/docs/`。原因是当前 `docs/superpowers/` 明显是仓库工作流资产，不只服务于应用运行时。
 
 ### 迁移后应删除或废弃的内容
 
@@ -222,9 +222,9 @@ apps/harness  --->  packages/tmux-manager
 - 统一 test
 - 统一安装 / 更新依赖
 
-### apps/harness 配置
+### apps/bata-workflow 配置
 
-`apps/harness/package.json` 保留应用脚本职责，包括但不限于：
+`apps/bata-workflow/package.json` 保留应用脚本职责，包括但不限于：
 
 - `build`
 - `test`
@@ -253,15 +253,15 @@ apps/harness  --->  packages/tmux-manager
 由 Rush 统一调度项目构建顺序：
 
 1. 先构建 `packages/tmux-manager`
-2. 再构建 `apps/harness`
+2. 再构建 `apps/bata-workflow`
 
-这样可以保证如果 `harness` 依赖 `tmux-manager` 的类型或产物，构建顺序始终正确。
+这样可以保证如果 `bata-workflow` 依赖 `tmux-manager` 的类型或产物，构建顺序始终正确。
 
 ### 项目级构建
 
 每个项目继续保留自己的本地构建能力：
 
-- 可以在 `apps/harness` 内独立执行应用构建
+- 可以在 `apps/bata-workflow` 内独立执行应用构建
 - 可以在 `packages/tmux-manager` 内独立执行库构建
 
 仓库级编排与单项目开发应同时成立，不能相互排斥。
@@ -272,7 +272,7 @@ apps/harness  --->  packages/tmux-manager
 
 测试归属保持不变：
 
-- `apps/harness/tests/*` 继续验证 harness 应用行为
+- `apps/bata-workflow/tests/*` 继续验证 bata-workflow 应用行为
 - `packages/tmux-manager` 内部测试继续验证 tmux manager 库行为
 
 本次迁移不把两边 Vitest 配置强行合成一个超级测试配置。
@@ -290,7 +290,7 @@ apps/harness  --->  packages/tmux-manager
 
 本次迁移采用“最小必要改动”原则：
 
-- `apps/harness/tsconfig.json` 继续服务于 harness
+- `apps/bata-workflow/tsconfig.json` 继续服务于 bata-workflow
 - `packages/tmux-manager/tsconfig.json` 继续服务于 tmux-manager
 - 根目录不立即抽象成统一超大 `tsconfig` 体系
 
@@ -308,7 +308,7 @@ monorepo 迁移后，依赖安装入口统一收敛到仓库根目录，使用 R
 
 ### 内部依赖
 
-`apps/harness` 通过 workspace dependency 依赖 `@luobata/tmux-manager`，不通过复制代码或跨目录源码引用实现共享。
+`apps/bata-workflow` 通过 workspace dependency 依赖 `@luobata/tmux-manager`，不通过复制代码或跨目录源码引用实现共享。
 
 ## 运行方式
 
@@ -321,7 +321,7 @@ monorepo 迁移后，依赖安装入口统一收敛到仓库根目录，使用 R
 
 ### 子项目级工作模式
 
-- 在 `apps/harness` 中继续本地开发 CLI 与 watch 流程
+- 在 `apps/bata-workflow` 中继续本地开发 CLI 与 watch 流程
 - 在 `packages/tmux-manager` 中继续本地开发与运行库测试
 
 monorepo 的引入不能破坏现有单项目开发体验。
@@ -331,7 +331,7 @@ monorepo 的引入不能破坏现有单项目开发体验。
 推荐按以下顺序执行：
 
 1. 建立 monorepo root 配置
-2. 下沉当前 `harness` 到 `apps/harness`
+2. 下沉当前 `bata-workflow` 到 `apps/bata-workflow`
 3. 迁入外部 `tmux-manager` 到 `packages/tmux-manager`
 4. 修复 package 名称、workspace 依赖和脚本路径
 5. 统一安装依赖
@@ -352,29 +352,29 @@ monorepo 的引入不能破坏现有单项目开发体验。
 ### 结构验收
 
 - 根目录是有效的 Rush monorepo root
-- `apps/harness` 存在并承载原 harness 应用代码
+- `apps/bata-workflow` 存在并承接原 bata-workflow 应用代码
 - `packages/tmux-manager` 存在并承载原 tmux-manager 库代码
 
 ### 依赖验收
 
 - 仓库只保留一套 monorepo 级依赖安装机制
-- `harness` 已通过 workspace 依赖接入 `tmux-manager`
+- `bata-workflow` 已通过 workspace 依赖接入 `tmux-manager`
 
 ### 构建验收
 
 - `packages/tmux-manager` 可独立 build
-- `apps/harness` 可独立 build
+- `apps/bata-workflow` 可独立 build
 - 根目录可统一触发构建，且项目顺序正确
 
 ### 测试验收
 
 - `tmux-manager` 原有测试可运行
-- `harness` 原有测试可运行
+- `bata-workflow` 原有测试可运行
 - 根目录可统一触发测试
 
 ### 行为验收
 
-- `apps/harness` 的 CLI 入口仍可启动
+- `apps/bata-workflow` 的 CLI 入口仍可启动
 - 现有核心脚本语义保留：`watch`、`plan`、`orchestrate`、`resume`
 - 仓库不再依赖旧的单包根结构作为正式入口
 
@@ -384,7 +384,7 @@ monorepo 的引入不能破坏现有单项目开发体验。
 
 - 路径迁移可能影响测试文件、脚本文件、配置读取路径
 - 根目录角色变化可能影响现有相对路径假设
-- `harness` 若已有待完成改动，搬迁时更容易引入额外冲突
+- `bata-workflow` 若已有待完成改动，搬迁时更容易引入额外冲突
 - `tmux-manager` 迁入后若存在发布导向配置，需要判断哪些保留、哪些只在 monorepo 内部使用
 
 缓解策略是：
@@ -395,4 +395,4 @@ monorepo 的引入不能破坏现有单项目开发体验。
 
 ## 结论
 
-本设计采用“当前仓库直接升级为 Rush monorepo”的方案，将现有 harness 应用下沉到 `apps/harness`，并把外部 `tmux-manager` 迁入 `packages/tmux-manager`。迁移后，仓库根目录专注于 monorepo 编排，子项目分别保留清晰的应用 / 库边界，并通过 workspace 依赖形成稳定的单向关系。
+本设计采用"当前仓库直接升级为 Rush monorepo"的方案，将现有 bata-workflow 应用下沉到 `apps/bata-workflow`，并把外部 `tmux-manager` 迁入 `packages/tmux-manager`。迁移后，仓库根目录专注于 monorepo 编排，子项目分别保留清晰的应用 / 库边界，并通过 workspace 依赖形成稳定的单向关系。

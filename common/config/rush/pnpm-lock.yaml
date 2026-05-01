@@ -10,7 +10,7 @@ importers:
 
   .: {}
 
-  ../../apps/harness:
+  ../../apps/bata-workflow:
     dependencies:
       '@luobata/skill-contracts':
         specifier: workspace:*

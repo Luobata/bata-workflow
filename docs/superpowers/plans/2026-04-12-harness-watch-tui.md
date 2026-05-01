@@ -1,10 +1,10 @@
-# Harness Watch TUI Implementation Plan
+# Bata-Workflow Watch TUI Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
-**Goal:** 为 `harness` 增加一个只读实时监控型终端 TUI，通过 `watch` 命令观察 team 模式运行状态。
+**Goal:** 为 `bata-workflow` 增加一个只读实时监控型终端 TUI，通过 `watch` 命令观察 team 模式运行状态。
 
-**Architecture:** 复用现有 `.harness/state/runs/*` 中的 `report.json` / `task-store.json` 作为数据源，新增一层 TUI 状态聚合与终端渲染模块，不改变现有 `runGoal`、queue 或 runtime 执行语义。CLI 入口新增 `watch` 分支，默认读取最近一次运行，支持显式指定 `runDirectory` 或 `reportPath`。
+**Architecture:** 复用现有 `.bata-workflow/state/runs/*` 中的 `report.json` / `task-store.json` 作为数据源，新增一层 TUI 状态聚合与终端渲染模块，不改变现有 `runGoal`、queue 或 runtime 执行语义。CLI 入口新增 `watch` 分支，默认读取最近一次运行，支持显式指定 `runDirectory` 或 `reportPath`。
 
 **Tech Stack:** TypeScript、Node.js 内置 `readline`、现有 `RunReport` / `RuntimeSnapshot` 类型、JSON 状态文件。
 
@@ -274,7 +274,7 @@ Run: `npm run build`
 Expected: PASS
 
 人工验证：
-- 先执行一次 `pnpm dev /harness-debug --adapter=dry-run -dir <docs>`
+- 先执行一次 `pnpm dev /bata-workflow-debug --adapter=dry-run -dir <docs>`
 - 再执行 `pnpm dev watch`
 - 期望看到总览 / Workers / Hot Tasks / Recent Events，并可通过 `q` 退出
 
@@ -299,6 +299,6 @@ git commit -m "test: cover watch tui error states"
 - `npm test -- watch-command watch-state`
 - `npm test -- slash-command-loader planner-dispatcher watch-command watch-state`
 - `npm run build`
-- `pnpm dev /harness-debug --adapter=dry-run -dir <docs>`
+- `pnpm dev /bata-workflow-debug --adapter=dry-run -dir <docs>`
 - `pnpm dev watch`
 

@@ -1,4 +1,4 @@
-# Harness 下一阶段细粒度任务清单
+# Bata-Workflow 下一阶段细粒度任务清单
 
 > 目标：让新会话拿到这份清单后，可以直接进入 `watch` 的下一阶段演进：`detailMode` 切换、产物/验证证据可视化、结构化执行结果展示，而不用重新梳理前面的 watch/TUI 演进。
 
@@ -22,7 +22,7 @@
 - 查看 `git status`
 - 确认当前是否已经带有上一轮未提交实现
 - 不要重复实现已经存在的：
-  - `/harness-debug` 文档驱动入口
+  - `/bata-workflow-debug` 文档驱动入口
   - `watch` 终端 TUI 的总览 / workers / hotTasks / recentEvents
   - `selectedTask` 排障详情
   - `↑/↓/j/k/q/r/p` 交互
@@ -174,10 +174,10 @@
 
 ### F2. 命令级验证
 
-- `pnpm --dir "/Users/bytedance/luobata/bata-skill/harness" test -- watch-command watch-state`
-- `pnpm --dir "/Users/bytedance/luobata/bata-skill/harness" build`
-- `pnpm --dir "/Users/bytedance/luobata/bata-skill/harness" dev /harness-debug --adapter=dry-run -dir <docs>`
-- `pnpm --dir "/Users/bytedance/luobata/bata-skill/harness" dev watch --reportPath <report.json>`
+- `pnpm --dir "/Users/bytedance/luobata/bata-skill/bata-workflow/apps/bata-workflow" test -- watch-command watch-state`
+- `pnpm --dir "/Users/bytedance/luobata/bata-skill/bata-workflow/apps/bata-workflow" build`
+- `pnpm --dir "/Users/bytedance/luobata/bata-skill/bata-workflow/apps/bata-workflow" dev /bata-workflow-debug --adapter=dry-run -dir <docs>`
+- `pnpm --dir "/Users/bytedance/luobata/bata-skill/bata-workflow/apps/bata-workflow" dev watch --reportPath <report.json>`
 
 ---
 

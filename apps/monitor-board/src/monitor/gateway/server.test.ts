@@ -158,7 +158,7 @@ describe('createGatewayServer', () => {
     await closeGatewayServer(gateway);
   });
 
-  it('bootstraps websocket clients with snapshots injected from harness state polling', async () => {
+  it('bootstraps websocket clients with snapshots injected from bata-workflow state polling', async () => {
     const gateway = createGatewayServer(0);
     const address = gateway.server.address();
 

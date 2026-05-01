@@ -314,10 +314,10 @@ console.log('Test output:', output);
 process.on('SIGINT', () => killSplitLayout(layout));
 ```
 
-### With Harness
+### With Bata-Workflow
 
 ```typescript
-// In your harness project
+// In your bata-workflow project
 import { createSplitLayout, type SplitLayoutResult } from '@luobata/tmux-manager';
 
 async function runWithWatchers(tasks: Task[]) {

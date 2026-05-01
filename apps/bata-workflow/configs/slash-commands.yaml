@@ -1,0 +1,38 @@
+version: 1
+defaults:
+  teamName: default
+  adapter: coco-cli
+commands:
+  plan:
+    action: plan
+    description: 仅生成计划，不执行任务
+  run:
+    action: run
+    description: 执行默认编排流程
+  resume:
+    action: resume
+    description: 恢复最近一次运行
+  dev:
+    action: run
+    composition: feature-dev
+    description: 功能开发闭环
+  research:
+    action: run
+    composition: research-only
+    description: 调研闭环
+  qa:
+    action: run
+    composition: qa-only
+    description: 测试验证闭环
+  review:
+    action: run
+    composition: review-only
+    description: 审查闭环
+  full:
+    action: run
+    composition: mixed-research-dev
+    description: 调研加开发的完整闭环
+  bata-workflow-team:
+    action: run
+    dsl: team-run
+    description: 在对话中展开 team mode，并支持 slot 覆写

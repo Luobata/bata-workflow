@@ -217,7 +217,7 @@
      * your PR branch, and in this situation "rush change" will also automatically invoke "git fetch"
      * to retrieve the latest activity for the remote main branch.
      */
-    "url": "git@github.com:Luobata/harness.git",
+    "url": "git@github.com:Luobata/bata-workflow.git",
 
     /**
      * The default branch name. This tells "rush change" which remote branch to compare against.
@@ -337,8 +337,8 @@
    */
   "projects": [
     {
-      "packageName": "harness",
-      "projectFolder": "apps/harness",
+      "packageName": "bata-workflow",
+      "projectFolder": "apps/bata-workflow",
       "tags": [
         "app",
         "tools"

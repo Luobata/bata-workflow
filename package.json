@@ -1,10 +1,12 @@
 {
-  "name": "harness-monorepo",
+  "name": "bata-workflow-monorepo",
   "private": true,
   "packageManager": "pnpm@9.15.9",
   "scripts": {
     "build": "npx -y @microsoft/rush@5.175.0 build",
     "test": "npx -y @microsoft/rush@5.175.0 test",
+    "test:ralph": "pnpm --dir apps/bata-workflow run test:ralph",
+    "test:ralph:real": "pnpm --dir apps/bata-workflow run test:ralph:real",
     "update": "npx -y @microsoft/rush@5.175.0 update",
     "install:repo": "npx -y @microsoft/rush@5.175.0 install"
   }

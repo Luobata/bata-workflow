@@ -1,4 +1,4 @@
-# Harness Watch Task Details Implementation Plan
+# Bata-Workflow Watch Task Details Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
@@ -176,7 +176,7 @@ Expected: PASS
 - [x] **Step 4: 做一次真实链路冒烟**
 
 Run:
-- `pnpm dev /harness-debug --adapter=dry-run -dir <docs>`
+- `pnpm dev /bata-workflow-debug --adapter=dry-run -dir <docs>`
 - `pnpm dev watch --reportPath <report.json>`
 
 Expected:

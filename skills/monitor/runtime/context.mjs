@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 const DEFAULT_REQUESTER_ACTOR_ID = 'lead'
 const DEFAULT_BOARD_HOST = '127.0.0.1'
 const DEFAULT_BOARD_PORT = 5173
-const DEFAULT_STATE_ROOT_SEGMENTS = ['.harness', 'state']
+const DEFAULT_STATE_ROOT_SEGMENTS = ['.bata-workflow', 'state']
 
 const isDefaultRootActorId = (actorId) =>
   actorId === DEFAULT_REQUESTER_ACTOR_ID || actorId.startsWith(`${DEFAULT_REQUESTER_ACTOR_ID}-`)
@@ -42,7 +42,7 @@ const resolveBoardPort = (value) => {
 }
 
 const resolveHarnessStateRoot = (cwd, options) => {
-  const candidate = options.stateRoot ?? process.env.HARNESS_STATE_ROOT ?? process.env.MONITOR_STATE_ROOT
+  const candidate = options.stateRoot ?? process.env.BATA_WORKFLOW_STATE_ROOT ?? process.env.MONITOR_STATE_ROOT
   return candidate ? resolve(cwd, candidate) : resolve(cwd, ...DEFAULT_STATE_ROOT_SEGMENTS)
 }
 
@@ -78,13 +78,13 @@ export function getSessionStateFileName(rootSessionId) {
 export function resolveMonitorContext(options = {}) {
   const cwd = resolve(options.cwd ?? process.cwd())
   const homeDir = resolve(options.homeDir ?? process.env.HOME ?? process.env.USERPROFILE ?? cwd)
-  const harnessStateRoot = resolveHarnessStateRoot(cwd, options)
-  const stateRoot = resolve(harnessStateRoot, 'monitor-sessions')
+  const bataWorkflowStateRoot = resolveHarnessStateRoot(cwd, options)
+  const stateRoot = resolve(bataWorkflowStateRoot, 'monitor-sessions')
   const boardRepoRoot = findBoardRepoRoot(cwd) ?? findBoardRepoRootFromSkillSource()
   const boardHost = options.boardHost ?? DEFAULT_BOARD_HOST
   const boardPort = resolveBoardPort(options.boardPort)
   const boardRuntimeStatePath = boardRepoRoot
-    ? resolve(harnessStateRoot, 'monitor-board', 'runtime.json')
+    ? resolve(bataWorkflowStateRoot, 'monitor-board', 'runtime.json')
     : null
 
   mkdirSync(stateRoot, { recursive: true })
@@ -98,7 +98,7 @@ export function resolveMonitorContext(options = {}) {
   return {
     cwd,
     homeDir,
-    harnessStateRoot,
+    bataWorkflowStateRoot,
     stateRoot,
     stateFilePath,
     rootSessionId,
