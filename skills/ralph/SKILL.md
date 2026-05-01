@@ -6,6 +6,7 @@ tags:
   - subagent
   - review-loop
   - resume
+  - lessons-learned
 ---
 
 # Ralph
@@ -13,6 +14,45 @@ tags:
 `/ralph` 把需求拆成完整 TODO，controller（当前 session）直接持有所有任务，通过 Agent tool 派发 coding/review subagent 逐任务推进，支持断点恢复。
 
 **核心原则：** controller 自己创建并管理全部 TodoWrite，不依赖子 agent 代劳。
+
+---
+
+## 新增功能
+
+### 1. 未解决问题记录
+
+在 coding → review 循环中，review 发现但未解决的问题会被记录：
+
+- **记录位置**：`.ralph/unresolved-issues-summary.json`
+- **字段包括**：优先级（critical/high/medium/low）、分类、状态（open/deferred/wontfix）、延后原因
+- **输出时机**：所有任务完成后，作为结果的一部分输出
+
+### 2. Review 验收机制
+
+**只有 review 明确通过验收才能往下走**：
+- Review 状态必须为 `completed` 或 `pass`
+- 所有基础规则必须通过（代码能运行、无占位符、验收标准满足）
+- 不通过则继续修复循环
+
+### 3. 错误模式沉淀
+
+Review 发现问题并修复后，系统会：
+1. 分析错误类型（逻辑、边界条件、类型、并发、资源、API、配置、测试、文档等）
+2. 自动生成错误模式记录
+3. 保存到 `.ralph/lessons-learned/` 目录
+
+**沉淀内容**：
+- 错误模式名称
+- 根本原因
+- 修复策略
+- 预防建议
+- 示例（错误做法 vs 正确做法）
+
+### 4. Monitor 启动
+
+`--monitor` 参数现在支持在所有模式下启动：
+- **规划模式**（dryRunPlan）：启动 monitor 方便用户监控规划结果
+- **执行模式**：启动 monitor 实时追踪执行进度
 
 ---
 

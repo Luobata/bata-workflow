@@ -121,6 +121,59 @@ export const CommunicationHistoryEntrySchema = z.object({
 })
 
 /**
+ * Unresolved Issue - 未解决问题
+ */
+export const UnresolvedIssueSchema = z.object({
+  id: z.string(),
+  description: z.string(),
+  priority: z.enum(['critical', 'high', 'medium', 'low']),
+  category: z.enum(['bug', 'design', 'performance', 'security', 'compatibility', 'other']),
+  status: z.enum(['open', 'deferred', 'wontfix']),
+  reason: z.string().optional(),  // 为什么未解决/暂时不需要解决
+  taskId: z.string(),
+  taskTitle: z.string(),
+  round: z.number().int().nonnegative(),
+  createdAt: z.string().datetime(),
+  deferredAt: z.string().datetime().optional(),
+  deferredReason: z.string().optional(),
+})
+
+/**
+ * Coding Error Pattern - Coding错误模式（用于沉淀）
+ */
+export const CodingErrorPatternSchema = z.object({
+  id: z.string(),
+  pattern: z.string(),           // 错误模式名称
+  description: z.string(),       // 错误描述
+  category: z.enum([
+    'logic',           // 逻辑错误
+    'boundary',        // 边界条件遗漏
+    'type',            // 类型错误
+    'concurrency',     // 并发问题
+    'resource',        // 资源泄漏/管理
+    'api',             // API使用错误
+    'configuration',   // 配置错误
+    'testing',         // 测试遗漏
+    'documentation',   // 文档问题
+    'other',           // 其他
+  ]),
+  severity: z.enum(['low', 'medium', 'high', 'critical']),
+  rootCause: z.string(),         // 根本原因
+  fixStrategy: z.string(),       // 修复策略
+  preventionTip: z.string(),     // 预防建议
+  examples: z.array(z.object({
+    taskId: z.string(),
+    taskTitle: z.string(),
+    codeSnippet: z.string().optional(),
+    wrongApproach: z.string(),
+    correctApproach: z.string(),
+  })),
+  firstSeenAt: z.string().datetime(),
+  lastSeenAt: z.string().datetime(),
+  occurrences: z.number().int().nonnegative().default(1),
+})
+
+/**
  * Enhanced Task Channel - 增强的任务通信渠道
  */
 export const EnhancedTaskChannelSchema = z.object({
@@ -129,6 +182,8 @@ export const EnhancedTaskChannelSchema = z.object({
   communicationHistory: z.array(CommunicationHistoryEntrySchema),
   lastUpdatedAt: z.string().nullable(),
   totalRounds: z.number().int().nonnegative().default(0),
+  unresolvedIssues: z.array(UnresolvedIssueSchema).optional(),  // 未解决问题
+  errorPatterns: z.array(z.string()).optional(),                // 发现的错误模式ID列表
 })
 
 /**
@@ -204,6 +259,8 @@ const migrateChannelFormat = (channel) => {
       communicationHistory: [],
       lastUpdatedAt: null,
       totalRounds: 0,
+      unresolvedIssues: [],
+      errorPatterns: [],
     }
   }
 
@@ -232,6 +289,8 @@ const migrateChannelFormat = (channel) => {
       communicationHistory: channel.communicationHistory ?? [],
       lastUpdatedAt: channel.lastUpdatedAt ?? null,
       totalRounds: channel.totalRounds ?? 0,
+      unresolvedIssues: channel.unresolvedIssues ?? [],
+      errorPatterns: channel.errorPatterns ?? [],
     }
   }
 
@@ -254,6 +313,8 @@ const migrateChannelFormat = (channel) => {
     communicationHistory: [],
     lastUpdatedAt: channel.lastUpdatedAt ?? null,
     totalRounds: 0,
+    unresolvedIssues: [],
+    errorPatterns: [],
   }
 }
 

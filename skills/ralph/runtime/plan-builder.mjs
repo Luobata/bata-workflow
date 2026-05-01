@@ -62,7 +62,7 @@ const collectPathInsights = async (basePath, options = {}) => {
           .split('\n')
           .map((line) => line.trim())
           .filter((line) => /^#{1,3}\s+/.test(line))
-          .slice(0, 6)
+          .slice(0, 20)  // Increased from 6 to 20 to capture more milestones
           .map((line) => line.replace(/^#{1,3}\s+/, '').trim())
 
         const keyPoints = lines
@@ -916,6 +916,201 @@ const generateReviewContract = ({ task, insights, sourceDocument }) => {
 }
 
 /**
+ * Detect Milestone Structure - 检测里程碑/任务结构
+ *
+ * 识别文档中的里程碑模式，如 "Task 1:", "M1:", "里程碑" 等
+ */
+const detectMilestoneStructure = (insights) => {
+  const milestones = []
+  const milestonePatterns = [
+    /^Task\s+(\d+)[:：]\s*(.+)$/i,           // Task 1: Description
+    /^M(\d+)[:：]\s*(.+)$/i,                  // M1: Description
+    /^里程碑\s*(\d+)[:：]?\s*(.+)$/,          // 里程碑 1: Description
+    /^Milestone\s*(\d+)[:：]\s*(.+)$/i,       // Milestone 1: Description
+    /^阶段\s*(\d+)[:：]?\s*(.+)$/,            // 阶段 1: Description
+    /^Phase\s*(\d+)[:：]\s*(.+)$/i,           // Phase 1: Description
+  ]
+
+  for (const item of insights) {
+    const allText = [
+      ...(item.headings ?? []),
+      ...(item.keyPoints ?? []),
+    ]
+
+    for (const text of allText) {
+      for (const pattern of milestonePatterns) {
+        const match = text.match(pattern)
+        if (match) {
+          const number = parseInt(match[1], 10)
+          const title = match[2].trim()
+          // 去重
+          if (!milestones.some(m => m.number === number)) {
+            milestones.push({
+              number,
+              title,
+              source: item.file,
+              fullText: text,
+            })
+          }
+        }
+      }
+    }
+  }
+
+  // 按数字排序
+  milestones.sort((a, b) => a.number - b.number)
+  return milestones
+}
+
+/**
+ * Filter Meta Content - 过滤元内容
+ *
+ * 过滤不应该作为实现任务的元内容
+ */
+const isMetaContent = (text) => {
+  const metaPatterns = [
+    /^Command snippets? below default to/i,
+    /^If you execute commands? from/i,
+    /^Run:?\s*(pnpm|npm|yarn|node)/i,
+    /^Expected:?\s*(PASS|FAIL|Error)/i,
+    /^For agentic workers/i,
+    /^REQUIRED SUB-SKILL/i,
+    /^Use superpowers:/i,
+    /^execution context$/i,
+    /^file structure$/i,
+    /^new files$/i,
+    /^modified files$/i,
+    /^old files$/i,
+  ]
+
+  return metaPatterns.some(pattern => pattern.test(text.trim()))
+}
+
+/**
+ * Is Informational Section - 判断是否为纯说明性章节
+ *
+ * 这些章节通常不需要实现，只是提供背景或指导
+ */
+const isInformationalSection = (heading) => {
+  const informationalPatterns = [
+    /^背景与目标$/,
+    /^背景$/,
+    /^目标$/,
+    /^非目标$/,
+    /^设计原则$/,
+    /^总体架构$/,
+    /^核心数据流$/,
+    /^当前仓库问题/,
+    /^重构方向$/,
+    /^执行上下文$/,
+    /^Execution Context$/i,
+    /^Scope$/i,
+    /^概述$/,
+    /^Overview$/i,
+    /^引言$/,
+    /^Introduction$/i,
+    /^附录$/,
+    /^Appendix$/i,
+    /^参考/,
+    /^Reference/i,
+    /^术语/,
+    /^Glossary/i,
+  ]
+
+  return informationalPatterns.some(pattern => pattern.test(heading.trim()))
+}
+
+/**
+ * Extract Implementation Topics - 提取实现主题
+ *
+ * 从文档中提取真正的实现任务，而不是所有标题
+ */
+const extractImplementationTopics = (insights, options = {}) => {
+  const maxTopics = options.maxTopics ?? 20
+  const enableMilestoneDetection = options.enableMilestoneDetection ?? true
+
+  // Step 1: 尝试检测里程碑结构
+  if (enableMilestoneDetection) {
+    const milestones = detectMilestoneStructure(insights)
+    if (milestones.length >= 2) {
+      // 找到里程碑结构，使用里程碑作为主要任务
+      return milestones.slice(0, maxTopics).map(m => ({
+        topic: `Task ${m.number}: ${m.title}`,
+        source: m.source,
+        isMilestone: true,
+      }))
+    }
+  }
+
+  // Step 2: 没有里程碑结构，使用智能提取
+  const topics = []
+
+  for (const item of insights) {
+    const headings = item.headings ?? []
+
+    for (const heading of headings) {
+      // 跳过元内容
+      if (isMetaContent(heading)) continue
+
+      // 跳过纯说明性章节
+      if (isInformationalSection(heading)) continue
+
+      // 跳过结构性标题（已在 createOrderedUniqueTopics 中处理的）
+      const STRUCTURAL_HEADINGS = /^(file structure|new files?|modified files?|old files?|files? to retire|overview|introduction|background|summary|table of contents|contents?|index)$/i
+      if (STRUCTURAL_HEADINGS.test(heading.trim())) continue
+
+      // 跳过太短的标题
+      if (heading.length < 3) continue
+
+      // 检测实现相关的关键词
+      const implementationKeywords = [
+        /实现|implement/i,
+        /添加|add/i,
+        /构建|build/i,
+        /创建|create/i,
+        /集成|integrate/i,
+        /优化|optimize/i,
+        /重构|refactor/i,
+        /修复|fix/i,
+        /更新|update/i,
+        /迁移|migrate/i,
+        /测试|test/i,
+        /验证|verify/i,
+        /配置|config/i,
+        /部署|deploy/i,
+        /Task\s+\d+/i,
+        /M\d+:/,
+        /里程碑/,
+        /阶段/,
+        /Phase/i,
+      ]
+
+      const hasImplementationKeyword = implementationKeywords.some(pattern => pattern.test(heading))
+
+      // 如果标题包含实现关键词，或者是特定格式（如数字开头），则视为实现任务
+      if (hasImplementationKeyword || /^\d+[\.\、]/.test(heading)) {
+        topics.push({
+          topic: heading,
+          source: item.file,
+          isMilestone: false,
+        })
+      }
+    }
+  }
+
+  // 去重
+  const seen = new Set()
+  const uniqueTopics = topics.filter(t => {
+    const key = t.topic.toLowerCase()
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+
+  return uniqueTopics.slice(0, maxTopics)
+}
+
+/**
  * Build Dir Driven Tasks - 构建目录驱动任务（语义分析）
  */
 const buildDirDrivenTasks = async ({ dir, cwd, verificationCommands, e2eCommands }) => {
@@ -927,26 +1122,14 @@ const buildDirDrivenTasks = async ({ dir, cwd, verificationCommands, e2eCommands
     maxDepth: 4,
   })
 
-  // Step 2: 提取主题（与 path 模式共用逻辑）
-  const keyTopics = createOrderedUniqueTopics(
-    insights.flatMap((item) => {
-      const headings = item.headings ?? []
-      const keyPoints = item.keyPoints ?? []
+  // Step 2: 智能提取实现主题（新逻辑）
+  const implementationTopics = extractImplementationTopics(insights, {
+    maxTopics: 20,
+    enableMilestoneDetection: true,
+  })
 
-      const STRUCTURAL_HEADINGS = /^(file structure|new files?|modified files?|old files?|files? to retire|overview|introduction|background|summary|table of contents|contents?|index)$/i
-      const filteredHeadings = headings.filter((h) => !STRUCTURAL_HEADINGS.test(h.trim()))
-
-      const filteredKeyPoints = keyPoints.filter((kp) =>
-        !/^`[^`]+`/.test(kp) &&
-        !/^[-\w]+\/[-\w./]+/.test(kp) &&
-        !/\.[jt]sx?$/.test(kp) &&
-        kp.length > 4
-      )
-
-      return [...filteredHeadings, ...filteredKeyPoints]
-    }),
-    80,
-  )
+  // 转换为简单主题列表（兼容后续逻辑）
+  const keyTopics = implementationTopics.map(t => t.topic)
 
   const fallbackTopics = [
     `梳理 ${dir} 中的需求点与依赖`,
@@ -958,7 +1141,13 @@ const buildDirDrivenTasks = async ({ dir, cwd, verificationCommands, e2eCommands
   const tasks = []
   const pathContextSummary = buildPathContextSummary({ path: dir, insights })
   const sourceFiles = createOrderedUniqueTopics(insights.map((item) => item.file), 12)
-  const recommendedTopicLimit = estimatePathTopicLimit({ insights, topics })
+
+  // Step 3: 根据里程碑数量调整任务上限
+  const hasMilestones = implementationTopics.some(t => t.isMilestone)
+  const milestoneCount = implementationTopics.filter(t => t.isMilestone).length
+  const recommendedTopicLimit = hasMilestones
+    ? Math.min(milestoneCount, 15)  // 里程碑模式：最多15个任务
+    : Math.min(topics.length, 12)   // 普通模式：最多12个任务
 
   // Step 3: Analysis 任务
   const analysisTask = pushDetailedTask({
@@ -969,7 +1158,9 @@ const buildDirDrivenTasks = async ({ dir, cwd, verificationCommands, e2eCommands
     verificationCommands,
     backgroundContext: [
       '请先把技术方案拆成可执行功能点，并形成顺序依赖链。',
-      `当前自动判断建议功能点数量: ${recommendedTopicLimit}。若你识别到遗漏，可在实现总结中补充。`,
+      hasMilestones
+        ? `检测到 ${milestoneCount} 个里程碑任务，请按里程碑顺序推进。`
+        : `当前自动判断建议功能点数量: ${recommendedTopicLimit}。若你识别到遗漏，可在实现总结中补充。`,
       '要求覆盖来源文档中的核心章节与步骤，不允许只实现其中一小部分。',
       pathContextSummary,
     ].join('\n\n'),

@@ -17,7 +17,7 @@
 
 import { resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { existsSync } from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
 import { buildStatePaths, loadOrInitializeState, persistState, appendRuntimeLog, syncConfirmationState, writeCheckpoint, writeReviewOutputs } from './state-manager.mjs'
 import { defaultTodoBuilder } from './plan-builder.mjs'
 import { runDefaultAgentByMode, parseAgentOutput } from './agent-runner.mjs'
@@ -25,6 +25,7 @@ import { loadPrompts, buildRolePromptFromConfig } from './config-loader.mjs'
 import { transitionSession } from '../src/protocol/state-machine/session-machine.mjs'
 import { transitionTask } from '../src/protocol/state-machine/task-machine.mjs'
 import { normalizeTasks } from '../src/protocol/schemas/task-contract.mjs'
+import crypto from 'node:crypto'
 
 const DEFAULT_MODE = 'independent'
 const DEFAULT_MAX_REVIEW_ROUNDS = 3
@@ -110,6 +111,146 @@ const determineRoundType = (task, config) => {
   
   // 默认为通信
   return 'communication'
+}
+
+/**
+ * Record Unresolved Issue - 记录未解决问题
+ */
+const recordUnresolvedIssue = ({ task, issue, priority, category, reason }) => {
+  if (!task.channel.unresolvedIssues) {
+    task.channel.unresolvedIssues = []
+  }
+  
+  const existingIssue = task.channel.unresolvedIssues.find(
+    i => i.description === issue && i.status === 'open'
+  )
+  
+  if (existingIssue) {
+    // 已存在，更新
+    existingIssue.priority = priority
+    existingIssue.category = category
+    existingIssue.reason = reason
+    return existingIssue
+  }
+  
+  // 新建
+  const newIssue = {
+    id: `issue-${crypto.randomUUID().slice(0, 8)}`,
+    description: issue,
+    priority,
+    category,
+    status: 'open',
+    reason,
+    taskId: task.id,
+    taskTitle: task.title,
+    round: task.communicationRounds ?? 0,
+    createdAt: new Date().toISOString(),
+  }
+  
+  task.channel.unresolvedIssues.push(newIssue)
+  return newIssue
+}
+
+/**
+ * Defer Issue - 标记问题为延后处理
+ */
+const deferIssue = ({ task, issueId, reason }) => {
+  if (!task.channel.unresolvedIssues) return
+  
+  const issue = task.channel.unresolvedIssues.find(i => i.id === issueId)
+  if (issue) {
+    issue.status = 'deferred'
+    issue.deferredAt = new Date().toISOString()
+    issue.deferredReason = reason
+  }
+}
+
+/**
+ * Write Error Pattern - 写入错误模式到沉淀目录
+ */
+const writeErrorPattern = async ({ statePaths, pattern }) => {
+  const lessonsDir = resolve(statePaths.root, 'lessons-learned')
+  if (!existsSync(lessonsDir)) {
+    mkdirSync(lessonsDir, { recursive: true })
+  }
+  
+  const patternFile = resolve(lessonsDir, `${pattern.id}.json`)
+  const { writeFile } = await import('node:fs/promises')
+  await writeFile(patternFile, JSON.stringify(pattern, null, 2), 'utf8')
+  
+  return patternFile
+}
+
+/**
+ * Analyze Error Pattern - 分析错误模式
+ */
+const analyzeErrorPattern = ({ reviewResult, codingResult, task }) => {
+  const requiredFixes = reviewResult?.requiredFixes ?? []
+  if (requiredFixes.length === 0) return null
+  
+  // 简单的错误分类逻辑
+  const categories = {
+    logic: /逻辑|判断|条件|if|else|condition/i,
+    boundary: /边界|越界|空值|null|undefined|empty|边界条件/i,
+    type: /类型|type|类型错误|类型不匹配/i,
+    concurrency: /并发|锁|线程|异步|async|await|race/i,
+    resource: /内存|泄漏|资源|连接|connection|memory|leak/i,
+    api: /api|接口|调用|参数|parameter|argument/i,
+    configuration: /配置|config|环境|environment/i,
+    testing: /测试|test|覆盖|coverage|边界测试/i,
+    documentation: /文档|注释|document|comment|readme/i,
+  }
+  
+  const fixes = []
+  for (const fix of requiredFixes) {
+    let category = 'other'
+    for (const [cat, pattern] of Object.entries(categories)) {
+      if (pattern.test(fix)) {
+        category = cat
+        break
+      }
+    }
+    
+    fixes.push({
+      description: fix,
+      category,
+    })
+  }
+  
+  // 合并同类错误
+  const categoryMap = new Map()
+  for (const fix of fixes) {
+    if (!categoryMap.has(fix.category)) {
+      categoryMap.set(fix.category, [])
+    }
+    categoryMap.get(fix.category).push(fix.description)
+  }
+  
+  // 生成错误模式
+  const patterns = []
+  for (const [category, descriptions] of categoryMap) {
+    patterns.push({
+      id: `error-${category}-${crypto.randomUUID().slice(0, 8)}`,
+      pattern: `${category} error in ${task.phase ?? 'implementation'}`,
+      description: descriptions.join('; '),
+      category,
+      severity: reviewResult.severity ?? 'medium',
+      rootCause: '待分析',
+      fixStrategy: descriptions.join('; '),
+      preventionTip: `在实现时注意 ${category} 相关问题`,
+      examples: [{
+        taskId: task.id,
+        taskTitle: task.title,
+        wrongApproach: codingResult.summary ?? '',
+        correctApproach: descriptions.join('; '),
+      }],
+      firstSeenAt: new Date().toISOString(),
+      lastSeenAt: new Date().toISOString(),
+      occurrences: 1,
+    })
+  }
+  
+  return patterns
 }
 
 const parseArgs = (argv) => {
@@ -334,9 +475,18 @@ const executeTaskLoop = async ({ task, context }) => {
   task.communicationRounds = task.communicationRounds ?? 0
   task.validationRounds = task.validationRounds ?? 0
   task.reviewRounds = task.reviewRounds ?? 0
+  
+  // 初始化未解决问题列表
+  if (!task.channel.unresolvedIssues) {
+    task.channel.unresolvedIssues = []
+  }
+  if (!task.channel.errorPatterns) {
+    task.channel.errorPatterns = []
+  }
 
   let advice = ''
   let shouldContinue = true
+  let lastReviewPassed = false  // 记录最后一次 review 是否通过
 
   while (shouldContinue) {
     const totalRounds = task.communicationRounds + task.validationRounds
@@ -443,12 +593,52 @@ const executeTaskLoop = async ({ task, context }) => {
       }
       task.channel.lastUpdatedAt = new Date().toISOString()
       
+      // === 新增：记录未解决问题 ===
+      const unresolvedItems = reviewResult.unresolvedIssues ?? []
+      for (const item of unresolvedItems) {
+        recordUnresolvedIssue({
+          task,
+          issue: item.description ?? item,
+          priority: item.priority ?? 'medium',
+          category: item.category ?? 'other',
+          reason: item.reason ?? '待解决',
+        })
+      }
+      
+      // === 新增：处理延后的问题 ===
+      const deferredItems = reviewResult.deferredIssues ?? []
+      for (const item of deferredItems) {
+        deferIssue({
+          task,
+          issueId: item.id,
+          reason: item.reason ?? '暂时不需要解决',
+        })
+      }
+      
+      // === 新增：分析并沉淀错误模式 ===
+      if ((reviewResult.requiredFixes ?? []).length > 0) {
+        const errorPatterns = analyzeErrorPattern({ reviewResult, codingResult, task })
+        if (errorPatterns && errorPatterns.length > 0) {
+          for (const pattern of errorPatterns) {
+            const patternFile = await writeErrorPattern({ statePaths, pattern })
+            task.channel.errorPatterns.push(pattern.id)
+            await writeRuntimeLog('task.error-pattern.recorded', {
+              taskId: task.id,
+              patternId: pattern.id,
+              category: pattern.category,
+              patternFile,
+            })
+          }
+        }
+      }
+      
       await writeRuntimeLog('task.review.finished', {
         taskId: task.id,
         round: task.communicationRounds + 1,
         type: 'communication',
         status: reviewResult.status,
         summary: reviewResult.summary,
+        unresolvedCount: task.channel.unresolvedIssues.length,
       })
 
       task.communicationRounds += 1
@@ -491,17 +681,25 @@ const executeTaskLoop = async ({ task, context }) => {
         break
       }
 
-      // 检查是否通过
+      // === 修改：只有 review 明确通过验收才能往下走 ===
       const reviewPassed = reviewResult.status === 'completed' || reviewResult.status === 'pass'
-      if (reviewPassed && basicCheck.allPassed) {
+      lastReviewPassed = reviewPassed && basicCheck.allPassed
+      
+      if (lastReviewPassed) {
         task.status = transitionTask(task.status, { reviewPassed: true })
         task.history.push({
           at: new Date().toISOString(),
           event: 'task-completed',
           communicationRounds: task.communicationRounds,
           validationRounds: task.validationRounds,
+          unresolvedIssues: task.channel.unresolvedIssues.length,
         })
-        await writeRuntimeLog('task.completed', { taskId: task.id, communicationRounds: task.communicationRounds, validationRounds: task.validationRounds })
+        await writeRuntimeLog('task.completed', { 
+          taskId: task.id, 
+          communicationRounds: task.communicationRounds, 
+          validationRounds: task.validationRounds,
+          unresolvedIssues: task.channel.unresolvedIssues.length,
+        })
         break
       }
 
@@ -510,6 +708,7 @@ const executeTaskLoop = async ({ task, context }) => {
         event: 'review-requested-changes',
         round: task.communicationRounds,
         basicRulesPassed: basicCheck.allPassed,
+        requiredFixes: reviewResult.requiredFixes ?? [],
       })
       await persistStateFn()
     } else {
@@ -638,6 +837,17 @@ export async function invokeRalph(options = {}) {
 
   await persistStateFn()
 
+  // === 修改：即使 dryRunPlan 也可能需要启动 monitor ===
+  let monitorIntegration = null
+  if (normalizedOptions.monitor && normalizedOptions.dryRunPlan) {
+    // dryRunPlan 模式下也启动 monitor，方便用户监控规划结果
+    monitorIntegration = await maybeStartMonitorForRalph({
+      options: normalizedOptions,
+      statePaths,
+      runMonitor,
+    })
+  }
+
   if (normalizedOptions.dryRunPlan) {
     session.status = transitionSession(session.status, {
       dryRunPlan: true,
@@ -672,16 +882,19 @@ export async function invokeRalph(options = {}) {
       requiresConfirmation: autoPlanOnly,
       confirmationPrompt: autoPlanOnly ? '目录模式已完成规划。请回复"确认"以开始执行，或使用 /ralph --resume。' : null,
       summary: `planned=${tasks.length}, executed=0`,
-      monitorIntegration: null,
+      monitorIntegration,
       tasks,
     }
   }
 
-  const monitorIntegration = await maybeStartMonitorForRalph({
-    options: normalizedOptions,
-    statePaths,
-    runMonitor,
-  })
+  // 非 dryRunPlan 模式下启动 monitor
+  if (!monitorIntegration) {
+    monitorIntegration = await maybeStartMonitorForRalph({
+      options: normalizedOptions,
+      statePaths,
+      runMonitor,
+    })
+  }
 
   await syncConfirmationState({
     statePaths,
@@ -727,6 +940,49 @@ export async function invokeRalph(options = {}) {
 
   const blockedCount = tasks.filter((task) => task.status === 'blocked').length
   const doneCount = tasks.filter((task) => task.status === 'done').length
+  
+  // === 新增：汇总所有未解决问题 ===
+  const allUnresolvedIssues = tasks.flatMap((task) => 
+    (task.channel?.unresolvedIssues ?? []).map((issue) => ({
+      ...issue,
+      taskId: task.id,
+      taskTitle: task.title,
+    }))
+  )
+  
+  // 按优先级排序
+  const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 }
+  allUnresolvedIssues.sort((a, b) => 
+    (priorityOrder[a.priority] ?? 99) - (priorityOrder[b.priority] ?? 99)
+  )
+  
+  // 写入未解决问题汇总文件
+  if (allUnresolvedIssues.length > 0) {
+    const issuesSummaryPath = resolve(statePaths.root, 'unresolved-issues-summary.json')
+    const { writeFile } = await import('node:fs/promises')
+    await writeFile(issuesSummaryPath, JSON.stringify({
+      total: allUnresolvedIssues.length,
+      byPriority: {
+        critical: allUnresolvedIssues.filter(i => i.priority === 'critical').length,
+        high: allUnresolvedIssues.filter(i => i.priority === 'high').length,
+        medium: allUnresolvedIssues.filter(i => i.priority === 'medium').length,
+        low: allUnresolvedIssues.filter(i => i.priority === 'low').length,
+      },
+      byStatus: {
+        open: allUnresolvedIssues.filter(i => i.status === 'open').length,
+        deferred: allUnresolvedIssues.filter(i => i.status === 'deferred').length,
+        wontfix: allUnresolvedIssues.filter(i => i.status === 'wontfix').length,
+      },
+      issues: allUnresolvedIssues,
+      generatedAt: new Date().toISOString(),
+    }, null, 2), 'utf8')
+    
+    await writeRuntimeLog('session.unresolved-issues', {
+      total: allUnresolvedIssues.length,
+      summaryPath: issuesSummaryPath,
+    })
+  }
+  
   session.status = transitionSession(session.status, {
     dryRunPlan: false,
     hasBlockedTasks: blockedCount > 0,
@@ -739,6 +995,7 @@ export async function invokeRalph(options = {}) {
     doneCount,
     total: tasks.length,
     status: session.status,
+    unresolvedIssues: allUnresolvedIssues.length,
   })
 
   return {
@@ -761,6 +1018,13 @@ export async function invokeRalph(options = {}) {
     summary: `done=${doneCount}, blocked=${blockedCount}, total=${tasks.length}`,
     monitorIntegration,
     tasks,
+    // === 新增：未解决问题汇总 ===
+    unresolvedIssues: allUnresolvedIssues,
+    unresolvedIssuesPath: allUnresolvedIssues.length > 0 
+      ? resolve(statePaths.root, 'unresolved-issues-summary.json')
+      : null,
+    // === 新增：错误沉淀目录 ===
+    lessonsLearnedDir: resolve(statePaths.root, 'lessons-learned'),
   }
 }
 
