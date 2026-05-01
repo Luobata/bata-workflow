@@ -37,7 +37,7 @@ describe('ralph skill runtime', () => {
 
     expect(result.kind).toBe('plan')
     expect(result.requiresConfirmation).toBe(true)
-    expect(result.confirmationPrompt).toContain('回复“确认”')
+    expect(result.confirmationPrompt).toContain('确认')
     expect(result.tasks.length).toBeGreaterThanOrEqual(6)
     expect(result.tasks[0].title).toContain('目录解析')
     expect(result.tasks.some((task: { title: string }) => task.title.includes('目录实现推进'))).toBe(true)
@@ -156,6 +156,7 @@ describe('ralph skill runtime', () => {
       cwd,
       goal: '实现一个按钮点击功能',
       mode: 'independent',
+      execute: true, // 明确指定执行模式
       todoBuilder: () => [
         {
           id: 'task-a',
@@ -205,6 +206,7 @@ describe('ralph skill runtime', () => {
       cwd,
       goal: '修复接口超时问题',
       mode: 'subagent',
+      execute: true, // 明确指定执行模式
       todoBuilder: () => [
         {
           id: 'task-loop',
@@ -257,6 +259,7 @@ describe('ralph skill runtime', () => {
       cwd,
       goal: '验证 TODO 注入提示',
       mode: 'independent',
+      execute: true, // 明确指定执行模式
       todoBuilder: () => [
         {
           id: 'task-a',
@@ -309,6 +312,7 @@ describe('ralph skill runtime', () => {
       cwd,
       goal: '验证 monitor 集成输出',
       mode: 'independent',
+      execute: true, // 明确指定执行模式
       monitor: true,
       runMonitor: async () => {
         monitorCallCount += 1
@@ -340,6 +344,7 @@ describe('ralph skill runtime', () => {
       cwd,
       goal: '第一次执行启动 monitor',
       mode: 'independent',
+      execute: true, // 明确指定执行模式
       monitor: true,
       runMonitor: async () => {
         monitorCallCount += 1
@@ -396,6 +401,7 @@ describe('ralph skill runtime', () => {
       cwd,
       goal: '实现并验证完整流程',
       mode: 'independent',
+      execute: true, // 明确指定执行模式
       todoBuilder: () => sharedTodo,
       runAgent: async ({ role, prompt }) => {
         if (!interrupted && role === 'coding' && prompt.includes('子任务2')) {

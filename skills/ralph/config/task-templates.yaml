@@ -1,0 +1,70 @@
+# Task Templates Configuration
+# 定义不同阶段的任务模板
+
+phases:
+  analysis:
+    acceptanceTemplate:
+      - "完成分析: {title}"
+      - "明确输入/输出、约束边界与依赖关系"
+      - "形成可执行子任务链（实现→验证）"
+    verificationCommands:
+      - 'echo "verify decomposition quality"'
+    deliverables:
+      - "任务拆解与依赖链说明"
+      - "风险清单与执行顺序建议"
+    handoffChecklist:
+      - "为实现任务提供明确执行边界"
+      - "标注必须验证的重点场景"
+    completionDefinition: "拆解结果可直接驱动后续实现，不需要额外澄清。"
+    executionHints:
+      - "将来源文档拆分为"可直接编码"的功能点，并标明依赖顺序。"
+      - "每个功能点至少包含输入、输出、边界条件三项定义。"
+      - "为后续实现任务补齐必要上下文，不留"待确认"占位。"
+
+  implementation:
+    acceptanceTemplate:
+      - "完成子目标: {topic}"
+      - "提交实现说明、风险与回滚点"
+      - "提供可执行测试建议"
+    deliverables:
+      - "代码改动摘要与关键设计说明"
+      - "测试建议与回归关注点"
+    handoffChecklist:
+      - "为 review 提供 context_for_peer"
+      - "列出本轮未完成但已识别的风险"
+    completionDefinition: "完成"{topic}"的实现与说明，并可被 review 直接验证。"
+    executionHints:
+      - "输出可复验的实现说明，明确哪些 acceptance 已覆盖。"
+
+  validation:
+    acceptanceTemplate:
+      - "验证完成: {topic}"
+      - "覆盖关键回归场景并给出结果"
+      - "给出通过/阻塞判定与后续建议"
+    deliverables:
+      - "验证记录（命令、结果、失败点）"
+      - "阻塞项与修复优先级建议"
+    handoffChecklist:
+      - "列出 required_tests 与 required_fixes"
+      - "输出可复现问题的最小步骤"
+    completionDefinition: "给出通过/阻塞结论，且 required_fixes/required_tests 可直接执行。"
+    executionHints:
+      - "逐条核对当前功能点 acceptance，不通过则明确 required_fixes。"
+      - "给出至少一条可执行 required_tests，避免"建议性"空话。"
+      - "若实现与来源方案不一致，标注偏差点与影响范围。"
+
+# 特殊任务类型
+special:
+  globalValidation:
+    title: "全量回归与e2e建议校验"
+    acceptanceTemplate:
+      - "验证完成: 全局回归验证"
+      - "覆盖关键回归场景并给出结果"
+      - "给出通过/阻塞判定与后续建议"
+    deliverables:
+      - "验证记录（命令、结果、失败点）"
+      - "阻塞项与修复优先级建议"
+    handoffChecklist:
+      - "列出 required_tests 与 required_fixes"
+      - "输出可复现问题的最小步骤"
+    completionDefinition: "给出通过/阻塞结论，且 required_fixes/required_tests 可直接执行。"

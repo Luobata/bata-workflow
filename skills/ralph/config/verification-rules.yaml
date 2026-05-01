@@ -1,0 +1,48 @@
+# Verification Rules Configuration
+# 定义项目类型检测和验证命令推断规则
+
+projectTypes:
+  nodejs:
+    detectors:
+      - file: "package.json"
+    commands:
+      verification:
+        - "npm test"
+        - "npm run build"
+      e2e:
+        - "npm run test:e2e"
+        - "pnpm test:e2e"
+  
+  golang:
+    detectors:
+      - file: "go.mod"
+    commands:
+      verification:
+        - "go test ./..."
+      e2e:
+        - "go test ./... -run E2E"
+  
+  python:
+    detectors:
+      - file: "pyproject.toml"
+      - file: "requirements.txt"
+    commands:
+      verification:
+        - "pytest"
+      e2e:
+        - "pytest -m e2e"
+  
+  rust:
+    detectors:
+      - file: "Cargo.toml"
+    commands:
+      verification:
+        - "cargo test"
+      e2e:
+        - "cargo test e2e"
+
+fallback:
+  verification:
+    - 'echo "manual verification required"'
+  e2e:
+    - "(如项目有 e2e 套件，请在本子任务完成后执行)"

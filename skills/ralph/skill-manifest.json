@@ -4,7 +4,7 @@
   "entry": "SKILL.md",
   "cocoInstallName": "ralph",
   "version": "0.1.0",
-  "files": ["skill-manifest.json", "SKILL.md", "runtime/**/*.mjs"],
+  "files": ["skill-manifest.json", "SKILL.md", "runtime/**/*.mjs", "src/**/*.ts"],
   "dev": {
     "link": true,
     "publishLocal": true
