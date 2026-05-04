@@ -82,6 +82,54 @@ tags:
 
 ---
 
+## 配置校验
+
+启动任务前会自动校验配置：
+
+### 校验项
+
+| 配置项 | 校验规则 | 错误处理 |
+|--------|---------|---------|
+| `models.coding` | 必须在支持列表中 | 警告 + 使用默认值 |
+| `models.review` | 必须在支持列表中 | 警告 + 使用默认值 |
+| `mode` | 必须是 `independent` 或 `subagent` | 警告 + 使用默认值 |
+| `maxReviewRounds` | 1-10 之间的整数 | 警告 + 使用默认值 |
+| `validation.maxTotalRounds` | 1-20 之间的整数 | 警告 |
+
+### 支持的模型
+
+```
+gpt-5.3-codex    (推荐，代码能力强)
+gpt-5.4-pro      (更强推理能力)
+gpt-4o           (通用模型)
+gpt-4-turbo
+gpt-4
+claude-sonnet-4
+claude-sonnet-3.5
+claude-opus-4
+claude-3.5-sonnet
+claude-3-opus
+```
+
+### 自定义模型
+
+支持自定义模型前缀：
+- `custom:<model-name>` - 自定义模型
+- `local:<model-name>` - 本地模型
+
+### 校验输出示例
+
+```
+⚠️  配置校验发现问题：
+
+  ⚠ coding 模型 "nonexistent-model" 不在支持列表中
+    → 将使用默认模型: gpt-5.3-codex
+  ⚠ 执行模式 "invalid-mode" 不支持
+    → 将使用默认模式: independent
+```
+
+---
+
 ## 新增功能
 
 ### 1. 未解决问题记录

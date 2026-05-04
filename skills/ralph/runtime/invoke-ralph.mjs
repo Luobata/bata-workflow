@@ -94,6 +94,20 @@ const checkBasicRules = (codingResult, reviewResult, task) => {
  */
 const RALPH_CONFIG_FILE = 'ralph.config.json'
 
+// 支持的模型列表
+const SUPPORTED_MODELS = [
+  'gpt-5.3-codex',
+  'gpt-5.4-pro',
+  'gpt-4o',
+  'gpt-4-turbo',
+  'gpt-4',
+  'claude-sonnet-4',
+  'claude-sonnet-3.5',
+  'claude-opus-4',
+  'claude-3.5-sonnet',
+  'claude-3-opus',
+]
+
 const DEFAULT_RALPH_CONFIG = {
   version: '1.0',
   models: {
@@ -112,6 +126,129 @@ const DEFAULT_RALPH_CONFIG = {
     enabled: false,
     autoStart: false,
   },
+}
+
+/**
+ * Validate Model Name - 校验模型名称
+ */
+const validateModelName = (model, role) => {
+  if (!model || typeof model !== 'string') {
+    return {
+      valid: false,
+      error: `${role} 模型名称为空或格式错误`,
+      suggestion: `请使用支持的模型: ${SUPPORTED_MODELS.slice(0, 3).join(', ')}`,
+    }
+  }
+  
+  // 支持自定义模型（以自定义前缀开头）
+  if (model.startsWith('custom:') || model.startsWith('local:')) {
+    return { valid: true }
+  }
+  
+  // 检查是否在支持列表中
+  const isSupported = SUPPORTED_MODELS.some(m => 
+    model === m || model.toLowerCase() === m.toLowerCase()
+  )
+  
+  if (!isSupported) {
+    return {
+      valid: false,
+      error: `${role} 模型 "${model}" 不在支持列表中`,
+      suggestion: `支持的模型: ${SUPPORTED_MODELS.join(', ')}`,
+      fallback: DEFAULT_RALPH_CONFIG.models[role === 'coding' ? 'coding' : 'review'],
+    }
+  }
+  
+  return { valid: true }
+}
+
+/**
+ * Validate Config - 校验配置
+ */
+const validateRalphConfig = (config, options = {}) => {
+  const errors = []
+  const warnings = []
+  const normalized = { ...DEFAULT_RALPH_CONFIG, ...config }
+  
+  // 校验 models
+  if (config.models) {
+    // Coding model
+    const codingValidation = validateModelName(config.models.coding, 'coding')
+    if (!codingValidation.valid) {
+      if (options.strict) {
+        errors.push(codingValidation)
+      } else {
+        warnings.push({
+          ...codingValidation,
+          action: `将使用默认模型: ${codingValidation.fallback}`,
+        })
+        normalized.models.coding = codingValidation.fallback || DEFAULT_RALPH_CONFIG.models.coding
+      }
+    }
+    
+    // Review model
+    const reviewValidation = validateModelName(config.models.review, 'review')
+    if (!reviewValidation.valid) {
+      if (options.strict) {
+        errors.push(reviewValidation)
+      } else {
+        warnings.push({
+          ...reviewValidation,
+          action: `将使用默认模型: ${reviewValidation.fallback}`,
+        })
+        normalized.models.review = reviewValidation.fallback || DEFAULT_RALPH_CONFIG.models.review
+      }
+    }
+  }
+  
+  // 校验 mode
+  if (config.mode && !['independent', 'subagent'].includes(config.mode)) {
+    warnings.push({
+      error: `执行模式 "${config.mode}" 不支持`,
+      suggestion: '支持的模式: independent, subagent',
+      action: `将使用默认模式: independent`,
+    })
+    normalized.mode = 'independent'
+  }
+  
+  // 校验 maxReviewRounds
+  if (config.maxReviewRounds !== undefined) {
+    const rounds = Number(config.maxReviewRounds)
+    if (!Number.isInteger(rounds) || rounds < 1 || rounds > 10) {
+      warnings.push({
+        error: `maxReviewRounds 值 ${config.maxReviewRounds} 无效`,
+        suggestion: '应为 1-10 之间的整数',
+        action: `将使用默认值: 3`,
+      })
+      normalized.maxReviewRounds = 3
+    }
+  }
+  
+  // 校验 validation 配置
+  if (config.validation) {
+    const { maxTotalRounds, maxCommunicationRounds, maxValidationRounds } = config.validation
+    
+    if (maxTotalRounds !== undefined && (maxTotalRounds < 1 || maxTotalRounds > 20)) {
+      warnings.push({
+        error: `maxTotalRounds 值 ${maxTotalRounds} 超出范围`,
+        suggestion: '应为 1-20 之间的整数',
+      })
+    }
+    
+    if (maxCommunicationRounds !== undefined && maxCommunicationRounds > maxTotalRounds) {
+      warnings.push({
+        error: `maxCommunicationRounds (${maxCommunicationRounds}) > maxTotalRounds (${maxTotalRounds})`,
+        suggestion: '通信轮次不应超过总轮次',
+      })
+    }
+  }
+  
+  return {
+    valid: errors.length === 0,
+    errors,
+    warnings,
+    normalized,
+  }
 }
 
 /**
@@ -310,15 +447,35 @@ const applyConfigUpdates = async ({ cwd, updates }) => {
 /**
  * Load Ralph Config - 加载项目配置
  */
-export const loadRalphConfig = async (cwd) => {
+export const loadRalphConfig = async (cwd, options = {}) => {
   const { readFile } = await import('node:fs/promises')
   const configPath = resolve(cwd, RALPH_CONFIG_FILE)
   
+  let rawConfig = {}
+  let configExists = false
+  
   try {
     const content = await readFile(configPath, 'utf8')
-    return { ...DEFAULT_RALPH_CONFIG, ...JSON.parse(content) }
+    rawConfig = JSON.parse(content)
+    configExists = true
   } catch {
-    return { ...DEFAULT_RALPH_CONFIG }
+    // 配置不存在，使用默认配置
+  }
+  
+  // 校验配置
+  const validation = validateRalphConfig(rawConfig, options)
+  
+  return {
+    ...validation.normalized,
+    _meta: {
+      configPath,
+      configExists,
+      validation: {
+        valid: validation.valid,
+        errors: validation.errors,
+        warnings: validation.warnings,
+      },
+    },
   }
 }
 
@@ -1062,7 +1219,46 @@ export async function invokeRalph(options = {}) {
   }
 
   // === 加载项目配置 ===
-  const projectConfig = await loadRalphConfig(normalizedOptions.cwd)
+  const projectConfig = await loadRalphConfig(normalizedOptions.cwd, { strict: false })
+  
+  // === 显示配置校验警告 ===
+  const configWarnings = projectConfig._meta?.validation?.warnings ?? []
+  const configErrors = projectConfig._meta?.validation?.errors ?? []
+  
+  if (configWarnings.length > 0 || configErrors.length > 0) {
+    const warningLines = [
+      '⚠️  配置校验发现问题：',
+      '',
+    ]
+    
+    for (const w of configWarnings) {
+      warningLines.push(`  ⚠ ${w.error}`)
+      if (w.action) warningLines.push(`    → ${w.action}`)
+    }
+    
+    for (const e of configErrors) {
+      warningLines.push(`  ✗ ${e.error}`)
+      if (e.suggestion) warningLines.push(`    → ${e.suggestion}`)
+    }
+    
+    warningLines.push('')
+    
+    if (configErrors.length > 0) {
+      warningLines.push('❌ 配置存在严重错误，请修正后重试。')
+      return {
+        kind: 'config-error',
+        configPath: projectConfig._meta?.configPath,
+        errors: configErrors,
+        warnings: configWarnings,
+        message: warningLines.join('\n'),
+      }
+    }
+    
+    // 只有警告，输出提示但继续执行
+    if (normalizedOptions.output === 'text') {
+      process.stderr.write(warningLines.join('\n') + '\n')
+    }
+  }
   
   // 合并配置：命令行参数 > 项目配置 > 默认值
   const finalModel = normalizedOptions.model || projectConfig.models?.coding || DEFAULT_MODEL
@@ -1330,6 +1526,15 @@ const printResult = (result, output) => {
     if (result.message) {
       process.stdout.write(`${result.message}\n`)
     }
+    return
+  }
+  
+  // 处理配置错误
+  if (result.kind === 'config-error') {
+    if (result.message) {
+      process.stderr.write(`${result.message}\n`)
+    }
+    process.exitCode = 1
     return
   }
 
