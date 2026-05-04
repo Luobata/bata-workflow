@@ -17,7 +17,7 @@
 
 import { resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { existsSync, mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, realpathSync } from 'node:fs'
 import { buildStatePaths, loadOrInitializeState, persistState, appendRuntimeLog, syncConfirmationState, writeCheckpoint, writeReviewOutputs } from './state-manager.mjs'
 import { defaultTodoBuilder } from './plan-builder.mjs'
 import { runDefaultAgentByMode, parseAgentOutput } from './agent-runner.mjs'
@@ -86,6 +86,239 @@ const checkBasicRules = (codingResult, reviewResult, task) => {
     allPassed,
     hasCriticalIssue,
     results,
+  }
+}
+
+/**
+ * Ralph Configuration Schema - 配置 Schema
+ */
+const RALPH_CONFIG_FILE = 'ralph.config.json'
+
+const DEFAULT_RALPH_CONFIG = {
+  version: '1.0',
+  models: {
+    coding: 'gpt-5.3-codex',
+    review: 'gpt-5.3-codex',
+  },
+  mode: 'independent',
+  maxReviewRounds: 3,
+  validation: {
+    maxTotalRounds: 5,
+    maxCommunicationRounds: 3,
+    maxValidationRounds: 2,
+    enableEarlyStop: true,
+  },
+  monitor: {
+    enabled: false,
+    autoStart: false,
+  },
+}
+
+/**
+ * Init Ralph Config - 初始化配置（对话式）
+ */
+const initRalphConfig = async ({ cwd, output }) => {
+  const { readFile, writeFile } = await import('node:fs/promises')
+  const configPath = resolve(cwd, RALPH_CONFIG_FILE)
+  
+  // 检查是否已存在配置
+  let existingConfig = null
+  try {
+    const content = await readFile(configPath, 'utf8')
+    existingConfig = JSON.parse(content)
+  } catch {
+    // 配置不存在，使用默认值
+  }
+  
+  const config = {
+    ...DEFAULT_RALPH_CONFIG,
+    ...(existingConfig ?? {}),
+  }
+  
+  // 对话式收集配置（通过 stdout/stderr 输出提示）
+  // 由于这是 CLI 工具，我们输出 JSON 格式的交互提示
+  const prompts = []
+  
+  // Model 配置提示
+  prompts.push({
+    id: 'coding_model',
+    question: '请选择 Coding Agent 使用的模型',
+    current: config.models.coding,
+    options: [
+      { value: 'gpt-5.3-codex', label: 'GPT-5.3 Codex (推荐，代码能力强)' },
+      { value: 'gpt-5.4-pro', label: 'GPT-5.4 Pro (更强推理能力)' },
+      { value: 'gpt-4o', label: 'GPT-4o (通用模型)' },
+      { value: 'claude-sonnet-4', label: 'Claude Sonnet 4 (Anthropic)' },
+    ],
+  })
+  
+  prompts.push({
+    id: 'review_model',
+    question: '请选择 Review Agent 使用的模型',
+    current: config.models.review,
+    options: [
+      { value: 'gpt-5.3-codex', label: 'GPT-5.3 Codex (与 Coding 相同)' },
+      { value: 'gpt-5.4-pro', label: 'GPT-5.4 Pro (更强审查能力)' },
+      { value: 'gpt-4o', label: 'GPT-4o (通用模型)' },
+      { value: 'claude-sonnet-4', label: 'Claude Sonnet 4 (Anthropic)' },
+    ],
+  })
+  
+  prompts.push({
+    id: 'mode',
+    question: '请选择执行模式',
+    current: config.mode,
+    options: [
+      { value: 'independent', label: '独立模式 (每次调用独立 Agent)' },
+      { value: 'subagent', label: '子代理模式 (通过 Coco subagent 执行)' },
+    ],
+  })
+  
+  prompts.push({
+    id: 'max_review_rounds',
+    question: '最大 Review 轮次',
+    current: config.maxReviewRounds,
+    type: 'number',
+    min: 1,
+    max: 5,
+  })
+  
+  prompts.push({
+    id: 'enable_monitor',
+    question: '是否默认启用 Monitor 监控',
+    current: config.monitor.enabled,
+    type: 'boolean',
+  })
+  
+  // 输出交互提示（JSON 格式，供上层解析）
+  if (output === 'json') {
+    return {
+      kind: 'init-interactive',
+      configPath,
+      existingConfig: existingConfig ? true : false,
+      prompts,
+      currentConfig: config,
+      message: existingConfig 
+        ? '检测到已有配置文件，将更新配置' 
+        : '将创建新的配置文件',
+    }
+  }
+  
+  // 文本模式输出
+  const lines = [
+    '╔═══════════════════════════════════════════════════════════╗',
+    '║              Ralph 配置初始化                              ║',
+    '╚═══════════════════════════════════════════════════════════╝',
+    '',
+    existingConfig 
+      ? '📝 检测到已有配置文件，当前配置：' 
+      : '📝 将创建新的配置文件：',
+    '',
+    `  配置文件路径: ${configPath}`,
+    '',
+    '┌─ 模型配置 ─────────────────────────────────────────────┐',
+    `  Coding Model:  ${config.models.coding}`,
+    `  Review Model:  ${config.models.review}`,
+    '└────────────────────────────────────────────────────────┘',
+    '',
+    '┌─ 执行配置 ─────────────────────────────────────────────┐',
+    `  执行模式:          ${config.mode}`,
+    `  最大 Review 轮次:  ${config.maxReviewRounds}`,
+    `  最大总轮次:        ${config.validation.maxTotalRounds}`,
+    `  启用 Early Stop:   ${config.validation.enableEarlyStop}`,
+    '└────────────────────────────────────────────────────────┘',
+    '',
+    '┌─ Monitor 配置 ─────────────────────────────────────────┐',
+    `  启用 Monitor:  ${config.monitor.enabled}`,
+    '└────────────────────────────────────────────────────────┘',
+    '',
+    '─'.repeat(60),
+    '💡 如需修改配置，请回复以下格式（JSON）：',
+    '',
+    '  {',
+    '    "models": {',
+    '      "coding": "gpt-5.4-pro",',
+    '      "review": "gpt-5.3-codex"',
+    '    },',
+    '    "mode": "subagent",',
+    '    "maxReviewRounds": 3,',
+    '    "monitor": { "enabled": true }',
+    '  }',
+    '',
+    '或者使用命令行参数：',
+    '  --coding-model <model>   设置 Coding 模型',
+    '  --review-model <model>   设置 Review 模型',
+    '  --mode <mode>            设置执行模式 (independent/subagent)',
+    '  --monitor                启用 Monitor',
+    '',
+  ]
+  
+  return {
+    kind: 'init',
+    configPath,
+    existingConfig: existingConfig ? true : false,
+    currentConfig: config,
+    prompts,
+    message: lines.join('\n'),
+  }
+}
+
+/**
+ * Apply Config Updates - 应用配置更新
+ */
+const applyConfigUpdates = async ({ cwd, updates }) => {
+  const { readFile, writeFile } = await import('node:fs/promises')
+  const configPath = resolve(cwd, RALPH_CONFIG_FILE)
+  
+  // 读取现有配置
+  let config = { ...DEFAULT_RALPH_CONFIG }
+  try {
+    const content = await readFile(configPath, 'utf8')
+    config = { ...config, ...JSON.parse(content) }
+  } catch {
+    // 使用默认配置
+  }
+  
+  // 应用更新
+  if (updates.models) {
+    config.models = { ...config.models, ...updates.models }
+  }
+  if (updates.mode) {
+    config.mode = updates.mode
+  }
+  if (updates.maxReviewRounds !== undefined) {
+    config.maxReviewRounds = updates.maxReviewRounds
+  }
+  if (updates.validation) {
+    config.validation = { ...config.validation, ...updates.validation }
+  }
+  if (updates.monitor) {
+    config.monitor = { ...config.monitor, ...updates.monitor }
+  }
+  
+  // 写入配置
+  await writeFile(configPath, JSON.stringify(config, null, 2), 'utf8')
+  
+  return {
+    kind: 'init-applied',
+    configPath,
+    config,
+    message: `配置已保存到 ${configPath}`,
+  }
+}
+
+/**
+ * Load Ralph Config - 加载项目配置
+ */
+export const loadRalphConfig = async (cwd) => {
+  const { readFile } = await import('node:fs/promises')
+  const configPath = resolve(cwd, RALPH_CONFIG_FILE)
+  
+  try {
+    const content = await readFile(configPath, 'utf8')
+    return { ...DEFAULT_RALPH_CONFIG, ...JSON.parse(content) }
+  } catch {
+    return { ...DEFAULT_RALPH_CONFIG }
   }
 }
 
@@ -255,12 +488,15 @@ const analyzeErrorPattern = ({ reviewResult, codingResult, task }) => {
 
 const parseArgs = (argv) => {
   const options = {
+    command: '',  // 新增：子命令（init, plan, execute）
     cwd: process.cwd(),
     goal: '',
     path: '',
     dir: '',  // 新增：设计文档目录
     mode: DEFAULT_MODE,
     model: DEFAULT_MODEL,
+    codingModel: '',   // 新增：coding 专用 model
+    reviewModel: '',   // 新增：review 专用 model
     output: 'text',
     resume: false,
     resumeForce: false,
@@ -273,6 +509,12 @@ const parseArgs = (argv) => {
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index]
     const next = argv[index + 1]
+
+    // 子命令
+    if (token === 'init') {
+      options.command = 'init'
+      continue
+    }
 
     if (token === '--cwd' && next) {
       options.cwd = next
@@ -301,6 +543,16 @@ const parseArgs = (argv) => {
     }
     if (token === '--model' && next) {
       options.model = next
+      index += 1
+      continue
+    }
+    if (token === '--coding-model' && next) {
+      options.codingModel = next
+      index += 1
+      continue
+    }
+    if (token === '--review-model' && next) {
+      options.reviewModel = next
       index += 1
       continue
     }
@@ -773,12 +1025,15 @@ const executeTaskLoop = async ({ task, context }) => {
 
 export async function invokeRalph(options = {}) {
   const normalizedOptions = {
+    command: options.command ?? '',  // init, plan, execute
     cwd: resolve(options.cwd ?? process.cwd()),
     goal: typeof options.goal === 'string' ? options.goal : '',
     path: typeof options.path === 'string' ? options.path : '',
     dir: typeof options.dir === 'string' ? options.dir : '',  // 新增：设计文档目录
     mode: options.mode === 'subagent' ? 'subagent' : DEFAULT_MODE,
     model: typeof options.model === 'string' && options.model.trim() ? options.model.trim() : DEFAULT_MODEL,
+    codingModel: typeof options.codingModel === 'string' ? options.codingModel : '',
+    reviewModel: typeof options.reviewModel === 'string' ? options.reviewModel : '',
     output: options.output === 'json' ? 'json' : 'text',
     resume: Boolean(options.resume) || Boolean(options.resumeForce),
     resumeForce: Boolean(options.resumeForce),
@@ -786,7 +1041,35 @@ export async function invokeRalph(options = {}) {
     dryRunPlan: Boolean(options.dryRunPlan),
     execute: Boolean(options.execute),
     monitor: Boolean(options.monitor),
+    config: options.config ?? {},  // 配置更新（用于 apply）
   }
+
+  // === 处理 init 命令 ===
+  if (normalizedOptions.command === 'init') {
+    // 如果有配置更新，应用它们
+    if (Object.keys(normalizedOptions.config).length > 0) {
+      return await applyConfigUpdates({
+        cwd: normalizedOptions.cwd,
+        updates: normalizedOptions.config,
+      })
+    }
+    
+    // 否则返回交互式配置界面
+    return await initRalphConfig({
+      cwd: normalizedOptions.cwd,
+      output: normalizedOptions.output,
+    })
+  }
+
+  // === 加载项目配置 ===
+  const projectConfig = await loadRalphConfig(normalizedOptions.cwd)
+  
+  // 合并配置：命令行参数 > 项目配置 > 默认值
+  const finalModel = normalizedOptions.model || projectConfig.models?.coding || DEFAULT_MODEL
+  const finalCodingModel = normalizedOptions.codingModel || projectConfig.models?.coding || finalModel
+  const finalReviewModel = normalizedOptions.reviewModel || projectConfig.models?.review || finalModel
+  const finalMode = normalizedOptions.mode !== DEFAULT_MODE ? normalizedOptions.mode : (projectConfig.mode || DEFAULT_MODE)
+  const finalMonitor = normalizedOptions.monitor || projectConfig.monitor?.enabled || false
 
   const autoPlanOnly = !normalizedOptions.resume && !normalizedOptions.execute && !normalizedOptions.dryRunPlan
   if (autoPlanOnly) {
@@ -800,15 +1083,23 @@ export async function invokeRalph(options = {}) {
   await ensureDirectory(statePaths.logsDir)
 
   const todoBuilder = options.todoBuilder ?? defaultTodoBuilder
+  
+  // Agent runner 使用配置的 model
   const runAgent = options.runAgent ?? (normalizedOptions.stubAgent || process.env.RALPH_STUB_AGENT === '1' ? 
     async ({ role }) => ({
       stdout: JSON.stringify({ status: 'completed', summary: `[stub] ${role} completed`, suggestions: [] }),
       stderr: '',
     }) : 
-    (args) => runDefaultAgentByMode({ ...args, stubAgent: normalizedOptions.stubAgent })
+    (args) => {
+      // 根据角色选择 model
+      const modelForRole = args.role === 'coding' ? finalCodingModel : 
+                           args.role === 'review' ? finalReviewModel : 
+                           finalModel
+      return runDefaultAgentByMode({ ...args, model: modelForRole, stubAgent: normalizedOptions.stubAgent })
+    }
   )
   const runMonitor = options.runMonitor ?? defaultRunMonitor
-  const maxReviewRounds = Number.isInteger(options.maxReviewRounds) ? Number(options.maxReviewRounds) : DEFAULT_MAX_REVIEW_ROUNDS
+  const maxReviewRounds = Number.isInteger(options.maxReviewRounds) ? Number(options.maxReviewRounds) : (projectConfig.maxReviewRounds ?? DEFAULT_MAX_REVIEW_ROUNDS)
 
   const { session, tasks, resumed } = await loadOrInitializeState({
     options: normalizedOptions,
@@ -839,10 +1130,10 @@ export async function invokeRalph(options = {}) {
 
   // === 修改：即使 dryRunPlan 也可能需要启动 monitor ===
   let monitorIntegration = null
-  if (normalizedOptions.monitor && normalizedOptions.dryRunPlan) {
+  if (finalMonitor && normalizedOptions.dryRunPlan) {
     // dryRunPlan 模式下也启动 monitor，方便用户监控规划结果
     monitorIntegration = await maybeStartMonitorForRalph({
-      options: normalizedOptions,
+      options: { ...normalizedOptions, monitor: finalMonitor },
       statePaths,
       runMonitor,
     })
@@ -888,9 +1179,9 @@ export async function invokeRalph(options = {}) {
   }
 
   // 非 dryRunPlan 模式下启动 monitor
-  if (!monitorIntegration) {
+  if (!monitorIntegration && finalMonitor) {
     monitorIntegration = await maybeStartMonitorForRalph({
-      options: normalizedOptions,
+      options: { ...normalizedOptions, monitor: finalMonitor },
       statePaths,
       runMonitor,
     })
@@ -1031,6 +1322,14 @@ export async function invokeRalph(options = {}) {
 const printResult = (result, output) => {
   if (output === 'json') {
     process.stdout.write(`${JSON.stringify(result)}\n`)
+    return
+  }
+
+  // 处理 init 命令结果
+  if (result.kind === 'init' || result.kind === 'init-interactive' || result.kind === 'init-applied') {
+    if (result.message) {
+      process.stdout.write(`${result.message}\n`)
+    }
     return
   }
 

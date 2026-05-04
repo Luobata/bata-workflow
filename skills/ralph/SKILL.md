@@ -17,6 +17,71 @@ tags:
 
 ---
 
+## 快速开始
+
+### 1. 初始化配置（推荐）
+
+```bash
+/ralph init
+```
+
+这会在项目目录下创建 `ralph.config.json` 配置文件，可以配置：
+- **Coding Model**：Coding Agent 使用的模型
+- **Review Model**：Review Agent 使用的模型
+- **执行模式**：independent（独立）或 subagent（子代理）
+- **最大 Review 轮次**
+- **Monitor 设置**
+
+### 2. 执行任务
+
+```bash
+# 基于目标描述
+/ralph --goal "实现用户认证模块"
+
+# 基于设计文档目录
+/ralph --dir ./docs/design
+
+# 基于单个文件
+/ralph --path ./docs/plan.md
+```
+
+---
+
+## 配置文件
+
+项目根目录下的 `ralph.config.json`：
+
+```json
+{
+  "version": "1.0",
+  "models": {
+    "coding": "gpt-5.3-codex",
+    "review": "gpt-5.4-pro"
+  },
+  "mode": "subagent",
+  "maxReviewRounds": 3,
+  "validation": {
+    "maxTotalRounds": 5,
+    "maxCommunicationRounds": 3,
+    "maxValidationRounds": 2,
+    "enableEarlyStop": true
+  },
+  "monitor": {
+    "enabled": false,
+    "autoStart": false
+  }
+}
+```
+
+**配置优先级**：命令行参数 > 项目配置文件 > 默认值
+
+**命令行覆盖**：
+```bash
+/ralph --coding-model gpt-5.4-pro --review-model gpt-5.3-codex --mode subagent
+```
+
+---
+
 ## 新增功能
 
 ### 1. 未解决问题记录
