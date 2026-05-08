@@ -138,8 +138,9 @@ And 状态文件应该正确恢复
 **验证方式**：
 ```bash
 # 1. 创建多任务场景
-echo "实现功能A，实现功能B" | /ralph --dryRunPlan
-echo "确认" | /ralph --execute
+/ralph --goal "实现功能A，实现功能B"
+确认
+# 或使用 /ralph --resume
 
 # 2. 模拟中断（在第一个任务完成后）
 # (通过环境变量控制中断点)
@@ -169,6 +170,7 @@ And monitor应该显示实时进度
 ```bash
 # 1. 启动带monitor的执行
 /ralph --goal "实现功能" --monitor
+继续
 
 # 2. 验证monitor启动
 cat .ralph/monitor-integration.json | jq '.status'
@@ -244,16 +246,17 @@ import('./skills/ralph/runtime/config-loader.mjs')
 
 ```bash
 # Step 1: 规划
-echo "实现一个待办事项应用" | /ralph --dryRunPlan
+/ralph --goal "实现一个待办事项应用"
 
 # Step 2: 查看规划结果
 cat .ralph/TODO.md
 
 # Step 3: 确认开始执行
-echo "确认" | /ralph --execute
+确认
+# 或 /ralph --resume
 
 # Step 4: 监控进度（可选）
-/ralph --goal "实现一个待办事项应用" --monitor
+/ralph --resume --monitor
 
 # Step 5: 查看最终结果
 cat .ralph/tasks.json | jq 'map({id, title, status})'
@@ -283,15 +286,16 @@ EOF
 /ralph --path docs/api-design.md
 
 # Step 3: 执行
-echo "确认" | /ralph --resume
+继续
+# 或 /ralph --resume
 ```
 
 ### 示例3：团队协作场景
 
 ```bash
 # Developer A: 实现核心功能
-echo "实现用户认证核心逻辑" | /ralph --dryRunPlan
-echo "确认" | /ralph --execute
+/ralph --goal "实现用户认证核心逻辑"
+开始
 
 # Developer B: 接续实现其他功能
 git pull  # 获取A的进度

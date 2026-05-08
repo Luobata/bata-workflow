@@ -21,7 +21,7 @@ import { existsSync, mkdirSync, realpathSync } from 'node:fs'
 import { buildStatePaths, loadOrInitializeState, persistState, appendRuntimeLog, syncConfirmationState, writeCheckpoint, writeReviewOutputs } from './state-manager.mjs'
 import { defaultTodoBuilder } from './plan-builder.mjs'
 import { runDefaultAgentByMode, parseAgentOutput } from './agent-runner.mjs'
-import { loadPrompts, buildRolePromptFromConfig } from './config-loader.mjs'
+import { loadPrompts, buildRolePromptFromConfig, loadRulesFromDirectory, loadKnowledgeBase, buildKnowledgeDiscoveryPrompt, formatKnowledgeEntry } from './config-loader.mjs'
 import { transitionSession } from '../src/protocol/state-machine/session-machine.mjs'
 import { transitionTask } from '../src/protocol/state-machine/task-machine.mjs'
 import { normalizeTasks } from '../src/protocol/schemas/task-contract.mjs'
@@ -462,11 +462,41 @@ export const loadRalphConfig = async (cwd, options = {}) => {
     // 配置不存在，使用默认配置
   }
   
+  // 从规则目录加载规则
+  const rulesDir = rawConfig.rulesDir || options.rulesDir
+  if (rulesDir) {
+    try {
+      const dirRules = await loadRulesFromDirectory(rulesDir, cwd)
+      
+      // 合并规则
+      rawConfig.codingRules = [
+        ...(rawConfig.codingRules || []),
+        ...dirRules.codingRules,
+      ]
+      rawConfig.reviewRules = [
+        ...(rawConfig.reviewRules || []),
+        ...dirRules.reviewRules,
+      ]
+      
+      // 背景上下文合并
+      if (dirRules.backgroundContext) {
+        rawConfig.backgroundContext = rawConfig.backgroundContext
+          ? `${rawConfig.backgroundContext}\n\n${dirRules.backgroundContext}`
+          : dirRules.backgroundContext
+      }
+    } catch {
+      // 规则目录加载失败，忽略
+    }
+  }
+  
   // 校验配置
   const validation = validateRalphConfig(rawConfig, options)
   
   return {
     ...validation.normalized,
+    codingRules: rawConfig.codingRules || [],
+    reviewRules: rawConfig.reviewRules || [],
+    backgroundContext: rawConfig.backgroundContext || '',
     _meta: {
       configPath,
       configExists,
@@ -661,6 +691,11 @@ const parseArgs = (argv) => {
     dryRunPlan: false,
     execute: false,
     monitor: false,
+    // 用户自定义规则
+    codingRules: [],    // 新增：coding 规则列表
+    reviewRules: [],    // 新增：review 规则列表
+    backgroundContext: '', // 新增：背景上下文
+    rulesDir: '',       // 新增：规则目录
   }
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -718,6 +753,42 @@ const parseArgs = (argv) => {
       index += 1
       continue
     }
+    
+    // 用户自定义规则 - coding
+    if (token === '--coding-rule' && next) {
+      options.codingRules.push(next)
+      index += 1
+      continue
+    }
+    
+    // 用户自定义规则 - review
+    if (token === '--review-rule' && next) {
+      options.reviewRules.push(next)
+      index += 1
+      continue
+    }
+    
+    // 背景上下文
+    if (token === '--context' && next) {
+      options.backgroundContext = next
+      index += 1
+      continue
+    }
+    
+    // 规则目录
+    if (token === '--rules-dir' && next) {
+      options.rulesDir = next
+      index += 1
+      continue
+    }
+    
+    // 从文件加载规则配置
+    if (token === '--rules-file' && next) {
+      options.rulesFile = next
+      index += 1
+      continue
+    }
+    
     if (token === '--resume') {
       options.resume = true
     }
@@ -762,7 +833,7 @@ const defaultRunMonitor = async ({ cwd }) => {
 }
 
 const maybeStartMonitorForRalph = async ({ options, statePaths, runMonitor }) => {
-  if (!options.monitor || options.dryRunPlan) {
+  if (!options.monitor) {
     return null
   }
 
@@ -872,6 +943,7 @@ const executeTaskLoop = async ({ task, context }) => {
     writeRuntimeLog,
     allTasks,
     promptsConfig,
+    ralphConfig = {},
   } = context
 
   task.status = transitionTask(task.status, {})
@@ -929,6 +1001,7 @@ const executeTaskLoop = async ({ task, context }) => {
         advice,
         allTasks,
         promptsConfig,
+        ralphConfig,
       })
 
       const codingRaw = await runAgent({ role: 'coding', prompt: codingPrompt, mode: options.mode, model: options.model })
@@ -979,6 +1052,7 @@ const executeTaskLoop = async ({ task, context }) => {
         advice: `coding-summary: ${codingResult.summary}\ntest-suggestions: ${(codingResult.testSuggestions ?? []).join('; ')}`,
         allTasks,
         promptsConfig,
+        ralphConfig,
       })
       const reviewRaw = await runAgent({ role: 'review', prompt: reviewPrompt, mode: options.mode, model: options.model })
       const reviewResult = parseAgentOutput(reviewRaw.stdout)
@@ -1036,6 +1110,81 @@ const executeTaskLoop = async ({ task, context }) => {
               patternId: pattern.id,
               category: pattern.category,
               patternFile,
+            })
+          }
+        }
+        
+        // === 知识发现 - 使用 LLM 判断是否沉淀规则 ===
+        const existingRules = ralphConfig.reviewRules || []
+        const issues = reviewResult.requiredFixes || []
+        
+        if (issues.length > 0) {
+          // 构建知识发现 prompt
+          const knowledgePrompt = buildKnowledgeDiscoveryPrompt({
+            existingRules,
+            issues,
+            taskTitle: task.title,
+            filesModified: codingResult.filesModified || [],
+          })
+          
+          try {
+            // 调用 knowledge-discovery agent
+            const knowledgeRaw = await runAgent({
+              role: 'knowledge-discovery',
+              prompt: knowledgePrompt,
+              mode: 'independent',
+              model: options.model,
+            })
+            
+            const knowledgeResult = parseAgentOutput(knowledgeRaw.stdout)
+            const knowledgeEntries = knowledgeResult.knowledgeEntries || []
+            
+            // 只添加 shouldAdd=true 的规则
+            const validEntries = knowledgeEntries.filter(e => e.shouldAdd === true)
+            
+            if (validEntries.length > 0) {
+              if (!task.channel.knowledgeSuggestions) {
+                task.channel.knowledgeSuggestions = []
+              }
+              
+              for (const entry of validEntries) {
+                const formattedEntry = {
+                  entry: {
+                    type: 'review_rule',
+                    content: {
+                      title: entry.title,
+                      description: entry.description,
+                      examples: entry.examples ? [entry.examples] : [],
+                      relatedFiles: entry.relatedFiles || [],
+                    },
+                    metadata: {
+                      createdAt: new Date().toISOString().split('T')[0],
+                      category: entry.category || 'general',
+                      confidence: entry.confidence || 'medium',
+                      reason: entry.reason,
+                    },
+                  },
+                  suggestedPath: `knowledge-base/review-rules/${entry.category || 'general'}.md`,
+                }
+                
+                task.channel.knowledgeSuggestions.push(formattedEntry)
+              }
+              
+              await writeRuntimeLog('task.knowledge.discovered', {
+                taskId: task.id,
+                count: validEntries.length,
+                entries: validEntries.map(e => ({
+                  title: e.title,
+                  category: e.category,
+                  confidence: e.confidence,
+                })),
+              })
+            }
+          } catch (error) {
+            // 知识发现失败不影响主流程
+            await writeRuntimeLog('task.knowledge.failed', {
+              taskId: task.id,
+              error: error instanceof Error ? error.message : String(error),
             })
           }
         }
@@ -1199,6 +1348,11 @@ export async function invokeRalph(options = {}) {
     execute: Boolean(options.execute),
     monitor: Boolean(options.monitor),
     config: options.config ?? {},  // 配置更新（用于 apply）
+    // 用户自定义规则
+    codingRules: Array.isArray(options.codingRules) ? options.codingRules : [],
+    reviewRules: Array.isArray(options.reviewRules) ? options.reviewRules : [],
+    backgroundContext: typeof options.backgroundContext === 'string' ? options.backgroundContext : '',
+    rulesDir: typeof options.rulesDir === 'string' ? options.rulesDir : '',
   }
 
   // === 处理 init 命令 ===
@@ -1219,7 +1373,56 @@ export async function invokeRalph(options = {}) {
   }
 
   // === 加载项目配置 ===
-  const projectConfig = await loadRalphConfig(normalizedOptions.cwd, { strict: false })
+  const projectConfig = await loadRalphConfig(normalizedOptions.cwd, { 
+    strict: false,
+    rulesDir: normalizedOptions.rulesDir,
+  })
+  
+  // === 构建状态目录路径（支持 monorepo）===
+  // 必须在知识库加载之前，因为知识库路径依赖于目标目录
+  const statePaths = buildStatePaths({
+    cwd: normalizedOptions.cwd,
+    path: normalizedOptions.path,
+    dir: normalizedOptions.dir,
+  })
+  
+  // === 加载知识库（自动检测，使用目标目录） ===
+  const knowledgeBaseDir = projectConfig.knowledgeBaseDir || 'knowledge-base'
+  let knowledgeBase = { codingRules: [], reviewRules: [], businessRules: [], adr: [] }
+  
+  // 检测知识库目录是否存在（在目标目录下）
+  const knowledgeBasePath = resolve(statePaths.targetDir, knowledgeBaseDir)
+  if (existsSync(knowledgeBasePath)) {
+    try {
+      knowledgeBase = await loadKnowledgeBase(knowledgeBaseDir, statePaths.targetDir)
+      
+      if (normalizedOptions.output === 'text') {
+        const totalRules = knowledgeBase.codingRules.length + knowledgeBase.reviewRules.length + knowledgeBase.businessRules.length
+        if (totalRules > 0) {
+          process.stderr.write(`📚 加载知识库: ${totalRules} 条规则 (coding: ${knowledgeBase.codingRules.length}, review: ${knowledgeBase.reviewRules.length}, business: ${knowledgeBase.businessRules.length})\n`)
+        }
+      }
+    } catch {
+      // 知识库加载失败，忽略
+    }
+  }
+  
+  // 合并规则：知识库 > 项目配置 > CLI
+  const finalCodingRules = [
+    ...(knowledgeBase.codingRules || []),      // 知识库规则
+    ...(projectConfig.codingRules || []),      // 项目配置
+    ...normalizedOptions.codingRules,          // CLI 参数
+  ]
+  const finalReviewRules = [
+    ...(knowledgeBase.reviewRules || []),      // 知识库规则
+    ...(projectConfig.reviewRules || []),      // 项目配置
+    ...normalizedOptions.reviewRules,          // CLI 参数
+  ]
+  const finalBackgroundContext = [
+    ...(knowledgeBase.businessRules || []),    // 知识库业务规则
+    projectConfig.backgroundContext || '',     // 项目配置
+    normalizedOptions.backgroundContext,       // CLI 参数
+  ].filter(Boolean).join('\n\n')
   
   // === 显示配置校验警告 ===
   const configWarnings = projectConfig._meta?.validation?.warnings ?? []
@@ -1267,12 +1470,13 @@ export async function invokeRalph(options = {}) {
   const finalMode = normalizedOptions.mode !== DEFAULT_MODE ? normalizedOptions.mode : (projectConfig.mode || DEFAULT_MODE)
   const finalMonitor = normalizedOptions.monitor || projectConfig.monitor?.enabled || false
 
-  const autoPlanOnly = !normalizedOptions.resume && !normalizedOptions.execute && !normalizedOptions.dryRunPlan
+  const autoPlanOnly = !normalizedOptions.resume && Boolean(
+    normalizedOptions.goal.trim() || normalizedOptions.path.trim() || normalizedOptions.dir.trim()
+  )
   if (autoPlanOnly) {
     normalizedOptions.dryRunPlan = true
   }
 
-  const statePaths = buildStatePaths(normalizedOptions.cwd)
   const { ensureDirectory } = await import('./state-manager.mjs')
   await ensureDirectory(statePaths.root)
   await ensureDirectory(statePaths.artifactsDir)
@@ -1343,11 +1547,12 @@ export async function invokeRalph(options = {}) {
       isResumed: false,
     })
     await persistStateFn()
+    const confirmationNextAction = '回复“确认”/“继续”/“开始”，或执行 /ralph --resume 开始执行子任务'
     await syncConfirmationState({
       statePaths,
-      awaitingConfirmation: autoPlanOnly,
-      reason: autoPlanOnly ? 'directory_mode_requires_confirm' : 'manual_plan_only',
-      nextAction: autoPlanOnly ? '回复"确认"或执行 /ralph --resume 开始执行子任务' : '按需执行 /ralph --resume',
+      awaitingConfirmation: true,
+      reason: 'plan_ready_waiting_user_confirmation',
+      nextAction: confirmationNextAction,
     })
     await writeRuntimeLog('session.planned', { taskCount: tasks.length })
 
@@ -1366,8 +1571,8 @@ export async function invokeRalph(options = {}) {
       todoStatePath: statePaths.todoStatePath,
       todoMarkdownPath: statePaths.todoMarkdownPath,
       runtimeLogPath: statePaths.runtimeLogPath,
-      requiresConfirmation: autoPlanOnly,
-      confirmationPrompt: autoPlanOnly ? '目录模式已完成规划。请回复"确认"以开始执行，或使用 /ralph --resume。' : null,
+      requiresConfirmation: true,
+      confirmationPrompt: `规划已生成，正在等待你的确认。${confirmationNextAction}`,
       summary: `planned=${tasks.length}, executed=0`,
       monitorIntegration,
       tasks,
@@ -1410,6 +1615,12 @@ export async function invokeRalph(options = {}) {
           writeRuntimeLog,
           allTasks: tasks,
           promptsConfig,
+          // 用户自定义规则
+          ralphConfig: {
+            codingRules: finalCodingRules,
+            reviewRules: finalReviewRules,
+            backgroundContext: finalBackgroundContext,
+          },
         },
       })
       await maybeInterruptOnceForE2E(statePaths)
@@ -1470,6 +1681,100 @@ export async function invokeRalph(options = {}) {
     })
   }
   
+  // === 新增：汇总所有知识发现建议 ===
+  const allKnowledgeSuggestions = tasks.flatMap((task) => 
+    (task.channel?.knowledgeSuggestions ?? []).map((s) => ({
+      ...s,
+      taskId: task.id,
+      taskTitle: task.title,
+    }))
+  )
+  
+  // 写入知识发现汇总文件
+  if (allKnowledgeSuggestions.length > 0) {
+    const knowledgeSummaryPath = resolve(statePaths.root, 'knowledge-suggestions.json')
+    const { writeFile, mkdir, readFile } = await import('node:fs/promises')
+    const { dirname } = await import('node:path')
+    
+    // 按建议路径分组
+    const groupedByPath = {}
+    for (const suggestion of allKnowledgeSuggestions) {
+      const path = suggestion.suggestedPath
+      if (!groupedByPath[path]) {
+        groupedByPath[path] = []
+      }
+      groupedByPath[path].push(suggestion)
+    }
+    
+    await writeFile(knowledgeSummaryPath, JSON.stringify({
+      total: allKnowledgeSuggestions.length,
+      byPath: Object.keys(groupedByPath).reduce((acc, path) => {
+        acc[path] = groupedByPath[path].length
+        return acc
+      }, {}),
+      suggestions: allKnowledgeSuggestions.map(s => ({
+        title: s.entry.content.title,
+        type: s.entry.type,
+        suggestedPath: s.suggestedPath,
+        taskId: s.taskId,
+        taskTitle: s.taskTitle,
+      })),
+      generatedAt: new Date().toISOString(),
+    }, null, 2), 'utf8')
+    
+    // === 自动写入知识库（使用目标目录） ===
+    const knowledgeBaseDir = projectConfig.knowledgeBaseDir || 'knowledge-base'
+    const knowledgeBasePath = resolve(statePaths.targetDir, knowledgeBaseDir)
+    
+    // 确保知识库目录存在
+    try {
+      await mkdir(resolve(knowledgeBasePath, 'coding-rules'), { recursive: true })
+      await mkdir(resolve(knowledgeBasePath, 'review-rules'), { recursive: true })
+      await mkdir(resolve(knowledgeBasePath, 'business-rules'), { recursive: true })
+    } catch {
+      // 目录已存在
+    }
+    
+    // 将知识发现写入知识库文件
+    for (const [suggestedPath, suggestions] of Object.entries(groupedByPath)) {
+      const absolutePath = resolve(statePaths.targetDir, suggestedPath)
+      const dir = dirname(absolutePath)
+      
+      // 确保目录存在
+      try {
+        await mkdir(dir, { recursive: true })
+      } catch {
+        // 目录已存在
+      }
+      
+      // 读取现有内容（如果文件存在）
+      let existingContent = ''
+      try {
+        existingContent = await readFile(absolutePath, 'utf8')
+      } catch {
+        // 文件不存在
+      }
+      
+      // 追加新规则
+      const newContent = suggestions.map(s => formatKnowledgeEntry(s.entry)).join('\n')
+      const finalContent = existingContent 
+        ? `${existingContent}\n${newContent}` 
+        : `# Knowledge Base\n\n${newContent}`
+      
+      await writeFile(absolutePath, finalContent, 'utf8')
+    }
+    
+    await writeRuntimeLog('session.knowledge-discovered', {
+      total: allKnowledgeSuggestions.length,
+      summaryPath: knowledgeSummaryPath,
+      writtenTo: knowledgeBasePath,
+    })
+    
+    if (normalizedOptions.output === 'text') {
+      process.stderr.write(`📝 知识库已更新: ${allKnowledgeSuggestions.length} 条新规则写入 ${knowledgeBaseDir}/\n`)
+    }
+  }
+  
   session.status = transitionSession(session.status, {
     dryRunPlan: false,
     hasBlockedTasks: blockedCount > 0,
@@ -1509,6 +1814,11 @@ export async function invokeRalph(options = {}) {
     unresolvedIssues: allUnresolvedIssues,
     unresolvedIssuesPath: allUnresolvedIssues.length > 0 
       ? resolve(statePaths.root, 'unresolved-issues-summary.json')
+      : null,
+    // === 新增：知识发现建议 ===
+    knowledgeSuggestions: allKnowledgeSuggestions,
+    knowledgeSuggestionsPath: allKnowledgeSuggestions.length > 0
+      ? resolve(statePaths.root, 'knowledge-suggestions.json')
       : null,
     // === 新增：错误沉淀目录 ===
     lessonsLearnedDir: resolve(statePaths.root, 'lessons-learned'),

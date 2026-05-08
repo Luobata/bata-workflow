@@ -74,7 +74,7 @@ function assertCocoPreflight(): void {
 
   const smoke = spawnSync(
     'coco',
-    ['--dangerously-skip-permissions', '--print', '请仅输出 JSON: {"status":"ok"}'],
+    ['-y', '--print', '请仅输出 JSON: {"status":"ok"}'],
     {
       cwd: appRoot,
       encoding: 'utf8',
@@ -91,12 +91,12 @@ function assertCocoPreflight(): void {
 }
 
 describe('ralph real coco e2e', () => {
-  runIfEnabled('starts real coco dialogue and executes /ralph flow', () => {
+  runIfEnabled('starts real coco dialogue with planning gate then natural-language confirmation', () => {
     assertCocoPreflight()
     const workspacePath = mkdtempSync(join(tmpdir(), 'ralph-real-coco-'))
 
     try {
-      const result = spawnSync(
+      const planningRun = spawnSync(
         process.execPath,
         [tsxCliPath, cliPath, '/ralph', '执行最小可验证任务并输出结论', '--cwd', workspacePath, '--mode', 'independent', '--output', 'json'],
         {
@@ -109,18 +109,49 @@ describe('ralph real coco e2e', () => {
         },
       )
 
-      assertSuccessfulProcess(result, 'independent /ralph real e2e')
-      const payload = JSON.parse(result.stdout) as {
+      assertSuccessfulProcess(planningRun, 'independent /ralph real e2e planning run')
+      const planningPayload = JSON.parse(planningRun.stdout) as {
+        kind: string
+        mode: string
+        summary: string
+        requiresConfirmation: boolean
+        tasks: Array<{ status: string }>
+      }
+
+      expect(planningPayload.mode).toBe('independent')
+      expect(planningPayload.kind).toBe('plan')
+      expect(planningPayload.requiresConfirmation).toBe(true)
+      expect(planningPayload.tasks.length).toBeGreaterThan(0)
+      expect(planningPayload.tasks.every((task) => task.status === 'pending')).toBe(true)
+      expect(planningPayload.summary).toContain('executed=0')
+      expect(existsSync(resolve(workspacePath, '.ralph', 'confirmation-state.json'))).toBe(true)
+
+      const resumeRun = spawnSync(
+        process.execPath,
+        [tsxCliPath, cliPath, '确认', '--cwd', workspacePath, '--mode', 'independent', '--output', 'json'],
+        {
+          cwd: appRoot,
+          encoding: 'utf8',
+          timeout: 240000,
+          env: {
+            ...process.env,
+          },
+        },
+      )
+
+      assertSuccessfulProcess(resumeRun, 'independent /ralph real e2e resume run')
+      const resumePayload = JSON.parse(resumeRun.stdout) as {
         kind: string
         mode: string
         summary: string
         tasks: Array<{ status: string }>
       }
 
-      expect(payload.mode).toBe('independent')
-      expect(['create', 'resume']).toContain(payload.kind)
-      expect(payload.tasks.length).toBeGreaterThan(0)
-      expect(payload.summary).toMatch(/done=\d+, blocked=\d+, total=\d+/)
+      expect(resumePayload.mode).toBe('independent')
+      expect(resumePayload.kind).toBe('resume')
+      expect(resumePayload.tasks.length).toBeGreaterThan(0)
+      expect(resumePayload.tasks.some((task) => task.status !== 'pending')).toBe(true)
+      expect(resumePayload.summary).toMatch(/done=\d+, blocked=\d+, total=\d+/)
       expect(existsSync(resolve(workspacePath, '.ralph', 'session.json'))).toBe(true)
       expect(existsSync(resolve(workspacePath, '.ralph', 'tasks.json'))).toBe(true)
 
@@ -131,12 +162,12 @@ describe('ralph real coco e2e', () => {
     }
   })
 
-  runAdvancedIfEnabled('runs real coco dialogue in subagent mode', () => {
+  runAdvancedIfEnabled('runs real coco dialogue in subagent mode after /ralph --resume', () => {
     assertCocoPreflight()
     const workspacePath = mkdtempSync(join(tmpdir(), 'ralph-real-coco-subagent-'))
 
     try {
-      const result = spawnSync(
+      const planningRun = spawnSync(
         process.execPath,
         [tsxCliPath, cliPath, '/ralph', '使用subagent模式执行最小任务', '--cwd', workspacePath, '--mode', 'subagent', '--output', 'json'],
         {
@@ -149,18 +180,49 @@ describe('ralph real coco e2e', () => {
         },
       )
 
-      assertSuccessfulProcess(result, 'subagent /ralph real e2e')
-      const payload = JSON.parse(result.stdout) as {
+      assertSuccessfulProcess(planningRun, 'subagent /ralph real e2e planning run')
+      const planningPayload = JSON.parse(planningRun.stdout) as {
+        kind: string
+        mode: string
+        summary: string
+        requiresConfirmation: boolean
+        tasks: Array<{ status: string }>
+      }
+
+      expect(planningPayload.mode).toBe('subagent')
+      expect(planningPayload.kind).toBe('plan')
+      expect(planningPayload.requiresConfirmation).toBe(true)
+      expect(planningPayload.tasks.length).toBeGreaterThan(0)
+      expect(planningPayload.tasks.every((task) => task.status === 'pending')).toBe(true)
+      expect(planningPayload.summary).toContain('executed=0')
+      expect(existsSync(resolve(workspacePath, '.ralph', 'confirmation-state.json'))).toBe(true)
+
+      const resumeRun = spawnSync(
+        process.execPath,
+        [tsxCliPath, cliPath, '/ralph', '--resume', '--cwd', workspacePath, '--mode', 'subagent', '--output', 'json'],
+        {
+          cwd: appRoot,
+          encoding: 'utf8',
+          timeout: 300000,
+          env: {
+            ...process.env,
+          },
+        },
+      )
+
+      assertSuccessfulProcess(resumeRun, 'subagent /ralph real e2e resume run')
+      const resumePayload = JSON.parse(resumeRun.stdout) as {
         kind: string
         mode: string
         summary: string
         tasks: Array<{ status: string }>
       }
 
-      expect(payload.mode).toBe('subagent')
-      expect(['create', 'resume']).toContain(payload.kind)
-      expect(payload.tasks.length).toBeGreaterThan(0)
-      expect(payload.summary).toMatch(/done=\d+, blocked=\d+, total=\d+/)
+      expect(resumePayload.mode).toBe('subagent')
+      expect(resumePayload.kind).toBe('resume')
+      expect(resumePayload.tasks.length).toBeGreaterThan(0)
+      expect(resumePayload.tasks.some((task) => task.status !== 'pending')).toBe(true)
+      expect(resumePayload.summary).toMatch(/done=\d+, blocked=\d+, total=\d+/)
       expect(existsSync(resolve(workspacePath, '.ralph', 'session.json'))).toBe(true)
       expect(existsSync(resolve(workspacePath, '.ralph', 'tasks.json'))).toBe(true)
     } finally {
@@ -173,7 +235,7 @@ describe('ralph real coco e2e', () => {
     const workspacePath = mkdtempSync(join(tmpdir(), 'ralph-real-coco-resume-'))
 
     try {
-      const firstRun = spawnSync(
+      const planningRun = spawnSync(
         process.execPath,
         [tsxCliPath, cliPath, '/ralph', '模拟中断后恢复执行', '--cwd', workspacePath, '--mode', 'independent', '--output', 'json'],
         {
@@ -182,16 +244,23 @@ describe('ralph real coco e2e', () => {
           timeout: 300000,
           env: {
             ...process.env,
-            RALPH_TEST_INTERRUPT_ONCE: '1',
           },
         },
       )
 
-      assertSuccessfulProcess(firstRun, 'resume flow first run')
-      const firstPayload = JSON.parse(firstRun.stdout) as { summary: string }
-      expect(firstPayload.summary).toMatch(/blocked=\d+/)
+      assertSuccessfulProcess(planningRun, 'resume flow planning run')
+      const planningPayload = JSON.parse(planningRun.stdout) as {
+        kind: string
+        summary: string
+        requiresConfirmation: boolean
+        tasks: Array<{ status: string }>
+      }
+      expect(planningPayload.kind).toBe('plan')
+      expect(planningPayload.requiresConfirmation).toBe(true)
+      expect(planningPayload.summary).toContain('executed=0')
+      expect(planningPayload.tasks.every((task) => task.status === 'pending')).toBe(true)
 
-      const secondRun = spawnSync(
+      const firstResumeRun = spawnSync(
         process.execPath,
         [tsxCliPath, cliPath, '/ralph', '--resume', '--cwd', workspacePath, '--mode', 'independent', '--output', 'json'],
         {
@@ -205,10 +274,29 @@ describe('ralph real coco e2e', () => {
         },
       )
 
-      assertSuccessfulProcess(secondRun, 'resume flow second run')
-      const secondPayload = JSON.parse(secondRun.stdout) as { kind: string; summary: string }
-      expect(secondPayload.kind).toBe('resume')
-      expect(secondPayload.summary).toContain('blocked=0')
+      assertSuccessfulProcess(firstResumeRun, 'resume flow first resume run')
+      const firstResumePayload = JSON.parse(firstResumeRun.stdout) as { kind: string; summary: string }
+      expect(firstResumePayload.kind).toBe('resume')
+      expect(firstResumePayload.summary).toMatch(/blocked=\d+/)
+
+      const secondResumeRun = spawnSync(
+        process.execPath,
+        [tsxCliPath, cliPath, '/ralph', '--resume', '--cwd', workspacePath, '--mode', 'independent', '--output', 'json'],
+        {
+          cwd: appRoot,
+          encoding: 'utf8',
+          timeout: 300000,
+          env: {
+            ...process.env,
+            RALPH_TEST_INTERRUPT_ONCE: '1',
+          },
+        },
+      )
+
+      assertSuccessfulProcess(secondResumeRun, 'resume flow second resume run')
+      const secondResumePayload = JSON.parse(secondResumeRun.stdout) as { kind: string; summary: string }
+      expect(secondResumePayload.kind).toBe('resume')
+      expect(secondResumePayload.summary).toContain('blocked=0')
 
       const markerPath = resolve(workspacePath, '.ralph', 'interrupt-once.marker')
       expect(existsSync(markerPath)).toBe(true)

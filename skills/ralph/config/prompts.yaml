@@ -55,6 +55,27 @@ roles:
         - required_fixes
         - context_for_peer
 
+  knowledge-discovery:
+    instruction: 你是知识发现专家。请分析 Review 发现的问题，判断是否需要沉淀为可复用规则。
+    rules:
+      - 只沉淀具有通用性的问题模式（可能在其他地方重复出现）
+      - 避免与已有规则重复或高度相似
+      - 规则描述要清晰、具体、可执行
+      - 必须给出错误示例和正确示例
+      - 评估规则的置信度（high/medium/low）
+    outputFormat:
+      knowledgeEntries:
+        - shouldAdd: true/false
+          reason: "为什么需要/不需要这条规则"
+          title: "规则标题"
+          description: "规则描述"
+          category: "concurrency | security | performance | correctness | maintainability"
+          examples:
+            wrong: "错误示例代码"
+            right: "正确示例代码"
+          confidence: "high | medium | low"
+          relatedFiles: ["相关文件路径"]
+
 phases:
   analysis:
     scopeRules:
@@ -77,3 +98,159 @@ phases:
       - 逐条核对当前功能点 acceptance，不通过则明确 required_fixes。
       - 给出至少一条可执行 required_tests，避免建议性空话。
       - 若实现与来源方案不一致，标注偏差点与影响范围。
+
+# ============================================================
+# 用户自定义规则配置（User Custom Rules）
+# ============================================================
+#
+# 用户可以通过以下方式自定义规则：
+#
+# 1. 项目级配置文件: ralph.config.json
+#    {
+#      "codingRules": [...],
+#      "reviewRules": [...],
+#      "backgroundContext": "..."
+#    }
+#
+# 2. CLI 参数:
+#    --coding-rules "规则1" --coding-rules "规则2"
+#    --review-rules "规则1" --review-rules "规则2"
+#    --context "背景说明"
+#
+# 3. 任务级配置（在 Markdown 计划中）:
+#    <!-- ralph-config
+#    codingRules:
+#      - 自定义规则1
+#    reviewRules:
+#      - 自定义规则2
+#    -->
+#
+# 优先级: CLI > 任务级 > 项目配置 > 默认
+#
+# ============================================================
+
+# 示例：用户自定义规则模板
+userCustomTemplates:
+  # Coding 规则示例
+  codingRulesExamples:
+    - name: "TypeScript 严格模式"
+      rules:
+        - 所有函数必须有明确的参数类型和返回类型
+        - 禁止使用 any，使用 unknown + 类型守卫
+        - 优先使用 interface 而非 type
+        - 使用 const enum 替代静态常量对象
+    
+    - name: "React 组件规范"
+      rules:
+        - 组件必须使用 FC<Props> 类型定义
+        - Props 必须可序列化（不能包含函数，事件除外）
+        - 使用 useCallback 包裹传递给子组件的回调
+        - 使用 useMemo 缓存计算密集型数据
+    
+    - name: "API 设计规范"
+      rules:
+        - 所有 API 必须返回统一的响应格式 { code, data, message }
+        - 错误处理必须区分业务错误（code=1xx）和系统错误（code=5xx）
+        - 分页接口必须返回 { items, total, page, pageSize }
+        - 必须添加请求参数校验
+    
+    - name: "测试优先"
+      rules:
+        - 先写失败测试，再写实现
+        - 测试覆盖率要求：核心逻辑 > 80%
+        - 每个 bug 修复必须有对应的回归测试
+        - 使用 describe/it 而非 test 套件
+    
+    - name: "文档要求"
+      rules:
+        - 公共 API 必须有 JSDoc 注释
+        - 复杂逻辑必须有内联注释说明原因
+        - README 必须包含安装、使用、API 三部分
+        - 变更日志必须记录 BREAKING CHANGES
+
+  # Review 规则示例
+  reviewRulesExamples:
+    - name: "代码质量"
+      rules:
+        - 检查是否有重复代码（DRY 原则）
+        - 检查函数长度是否超过 50 行
+        - 检查圈复杂度是否超过 10
+        - 检查是否有未使用的导入
+    
+    - name: "性能审查"
+      rules:
+        - 检查是否有 N+1 查询问题
+        - 检查是否在大循环中使用 await
+        - 检查是否有内存泄漏风险（未清理的监听器）
+        - 检查是否使用了正确的数据结构
+    
+    - name: "安全审查"
+      rules:
+        - 检查是否有 SQL 注入风险
+        - 检查是否有 XSS 风险（未转义的用户输入）
+        - 检查是否有敏感信息硬编码
+        - 检查权限校验是否完整
+    
+    - name: "可维护性"
+      rules:
+        - 检查命名是否清晰表意
+        - 检查是否有魔法数字
+        - 检查是否有过度抽象
+        - 检查依赖注入是否合理
+    
+    - name: "测试充分性"
+      rules:
+        - 检查边界条件是否有测试
+        - 检查错误路径是否有测试
+        - 检查并发场景是否有测试
+        - 检查 Mock 是否合理
+
+  # 背景上下文示例
+  backgroundContextExamples:
+    - name: "项目背景"
+      context: |
+        这是一个电商后台管理系统，使用 React + TypeScript + GraphQL 技术栈。
+        
+        核心模块：
+        - 订单管理：处理订单创建、支付、发货
+        - 商品管理：商品CRUD、库存管理
+        - 用户管理：权限控制、角色分配
+        
+        技术约束：
+        - 后端 API 使用 GraphQL，需遵循 Relay 规范
+        - 前端状态管理使用 Apollo Client
+        - 样式使用 Tailwind CSS
+    
+    - name: "团队规范"
+      context: |
+        团队使用 Git Flow 分支模型：
+        - main: 生产分支
+        - develop: 开发分支
+        - feature/*: 特性分支
+        - hotfix/*: 紧急修复分支
+        
+        Commit 规范：
+        - feat: 新功能
+        - fix: 修复bug
+        - refactor: 重构
+        - test: 测试相关
+        - docs: 文档
+        
+        PR 要求：
+        - 必须关联 Issue
+        - 必须通过 CI 检查
+        - 至少 1 个 Reviewer 批准
+    
+    - name: "业务背景"
+      context: |
+        当前任务涉及支付流程重构，需要集成微信支付和支付宝。
+        
+        业务规则：
+        - 支付超时时间：30分钟
+        - 支持部分退款，最多 3 次
+        - 退款需人工审核（金额 > 1000 元）
+        
+        已知风险：
+        - 第三方支付 API 可能有延迟
+        - 并发支付需要幂等性保护
+        - 退款状态同步有延迟

@@ -7,6 +7,25 @@ These rules apply when testing or modifying the ralph skill:
 - `skills/ralph/**`
 - `apps/bata-workflow/tests/ralph-*.test.ts`
 
+## Monorepo Support
+
+Ralph 支持在 monorepo 中针对子项目运行。关键行为：
+
+- **状态目录位置**：使用 `--path` 或 `--dir` 时，`.ralph/` 目录放在目标目录下
+- **知识库位置**：`knowledge-base/` 同样放在目标目录下
+- **确认/恢复**：需要从目标目录发起
+
+### 测试模式
+
+```bash
+# 从根目录针对子项目运行
+node invoke-ralph.mjs --cwd "$MONOREPO_ROOT" --path packages/app-a/design.md
+
+# 状态文件验证位置
+ls packages/app-a/.ralph/session.json
+ls packages/app-a/.ralph/tasks.json
+```
+
 ## E2E Testing Principles
 
 ### Isolated State Root

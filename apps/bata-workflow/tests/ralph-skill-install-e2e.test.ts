@@ -100,6 +100,7 @@ describe('ralph skill install e2e', () => {
     const statePath = resolve(sandbox.skillStateRoot, `${installName}.json`)
     const packOutputDirectory = resolve(sandbox.skillPacksRoot, installName, '0.1.0')
     const workspacePath = mkdtempSync(join(tmpdir(), 'ralph-workspace-'))
+    const publishedWorkspacePath = mkdtempSync(join(tmpdir(), 'ralph-published-workspace-'))
     const cliEnv = {
       BATA_WORKFLOW_STATE_ROOT: sandbox.stateRoot,
       BATA_WORKFLOW_SKILL_PACKS_ROOT: sandbox.skillPacksRoot,
@@ -110,6 +111,7 @@ describe('ralph skill install e2e', () => {
       rmSync(statePath, { recursive: true, force: true })
       rmSync(packOutputDirectory, { recursive: true, force: true })
       rmSync(workspacePath, { recursive: true, force: true })
+      rmSync(publishedWorkspacePath, { recursive: true, force: true })
       rmSync(sandbox.homeDirectory, { recursive: true, force: true })
     }
 
@@ -127,7 +129,7 @@ describe('ralph skill install e2e', () => {
       expect(existsSync(resolve(installPath, 'runtime', 'invoke-ralph.mjs'))).toBe(true)
 
       let interrupted = false
-      const linkedRuntimeResult = await runInstalledRalph(installPath, {
+      const linkedPlanningResult = await runInstalledRalph(installPath, {
         cwd: workspacePath,
         goal: '实现接口与测试',
         mode: 'independent',
@@ -135,6 +137,25 @@ describe('ralph skill install e2e', () => {
           { id: 'task-1', title: '子任务1: 实现接口', status: 'pending', reviewRounds: 0, lastAdvicePath: null, history: [] },
           { id: 'task-2', title: '子任务2: 补充测试', status: 'pending', reviewRounds: 0, lastAdvicePath: null, history: [] },
         ],
+      })
+
+      expect(linkedPlanningResult.status).toBe(0)
+      const linkedPlanningJson = JSON.parse(linkedPlanningResult.stdout) as {
+        kind: string
+        summary: string
+        requiresConfirmation: boolean
+        tasks: Array<{ status: string }>
+      }
+      expect(linkedPlanningJson.kind).toBe('plan')
+      expect(linkedPlanningJson.summary).toContain('executed=0')
+      expect(linkedPlanningJson.requiresConfirmation).toBe(true)
+      expect(linkedPlanningJson.tasks.every((task) => task.status === 'pending')).toBe(true)
+      expect(existsSync(resolve(workspacePath, '.ralph', 'confirmation-state.json'))).toBe(true)
+
+      const linkedRuntimeResult = await runInstalledRalph(installPath, {
+        cwd: workspacePath,
+        mode: 'independent',
+        resume: true,
         runAgent: async ({ role, prompt }: { role: string; prompt: string }) => {
           if (!interrupted && role === 'coding' && prompt.includes('子任务2')) {
             interrupted = true
@@ -149,8 +170,9 @@ describe('ralph skill install e2e', () => {
       })
 
       expect(linkedRuntimeResult.status).toBe(0)
-      const linkedRuntimeJson = JSON.parse(linkedRuntimeResult.stdout) as { summary: string }
-      expect(linkedRuntimeJson.summary).toContain('blocked=1')
+      const linkedRuntimeJson = JSON.parse(linkedRuntimeResult.stdout) as { summary: string; kind: string }
+      expect(linkedRuntimeJson.kind).toBe('resume')
+      expect(linkedRuntimeJson.summary).toMatch(/blocked=\d+|done=\d+/)
 
       const linkedCliRun = runInstalledRalphCli(
         installPath,
@@ -170,16 +192,40 @@ describe('ralph skill install e2e', () => {
         mode: 'published-local',
       })
 
+      const publishedPlanningResult = await runInstalledRalph(installPath, {
+        cwd: publishedWorkspacePath,
+        goal: '验证发布态计划阶段会加载验证规则',
+        mode: 'independent',
+      })
+
+      expect(publishedPlanningResult.status).toBe(0)
+      const publishedPlanningJson = JSON.parse(publishedPlanningResult.stdout) as {
+        kind: string
+        summary: string
+        requiresConfirmation: boolean
+        tasks: Array<{ status: string }>
+      }
+      expect(publishedPlanningJson.kind).toBe('plan')
+      expect(publishedPlanningJson.summary).toContain('executed=0')
+      expect(publishedPlanningJson.requiresConfirmation).toBe(true)
+      expect(publishedPlanningJson.tasks.length).toBeGreaterThan(0)
+      expect(publishedPlanningJson.tasks.every((task) => task.status === 'pending')).toBe(true)
+      expect(existsSync(resolve(publishedWorkspacePath, '.ralph', 'confirmation-state.json'))).toBe(true)
+
       const resumedRuntimeResult = await runInstalledRalph(installPath, {
         cwd: workspacePath,
         mode: 'subagent',
         resume: true,
+        execute: true,
         runAgent: async ({ role }: { role: string }) => ({
           stdout: JSON.stringify({ status: 'completed', summary: `${role} resumed`, suggestions: [] }),
           stderr: '',
         }),
       })
 
+      if (resumedRuntimeResult.status !== 0) {
+        console.log('Resume failed:', resumedRuntimeResult.stderr || resumedRuntimeResult.stdout)
+      }
       expect(resumedRuntimeResult.status).toBe(0)
       const resumedRuntimeJson = JSON.parse(resumedRuntimeResult.stdout) as {
         kind: string

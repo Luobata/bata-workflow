@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { appendFile, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
-import { existsSync, realpathSync } from 'node:fs'
+import { existsSync, realpathSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
 import crypto from 'node:crypto'
 
@@ -22,10 +22,40 @@ const readJson = async (filePath) => {
 }
 
 /**
- * Build State Paths - 构建状态目录路径
+ * Resolve Target Directory - 解析目标目录
+ * 
+ * 用于 monorepo 场景：
+ * - 如果指定了 path/dir，状态目录应放在目标目录
+ * - 否则放在 cwd 目录
  */
-export const buildStatePaths = (cwd) => {
-  const root = resolve(cwd, '.ralph')
+export const resolveTargetDirectory = ({ cwd, path, dir }) => {
+  // 优先使用 path 或 dir 作为目标目录
+  if (path && existsSync(path)) {
+    if (statSync(path).isDirectory()) {
+      return path
+    }
+    // 如果是文件，使用文件所在目录
+    return resolve(path, '..')
+  }
+  
+  if (dir && existsSync(dir)) {
+    return dir
+  }
+  
+  // 默认使用 cwd
+  return cwd
+}
+
+/**
+ * Build State Paths - 构建状态目录路径
+ * 
+ * 支持两种模式：
+ * 1. 目标模式（--path/--dir）：状态目录放在目标目录下
+ * 2. cwd 模式：状态目录放在 cwd 下
+ */
+export const buildStatePaths = ({ cwd, path, dir }) => {
+  const targetDir = resolveTargetDirectory({ cwd, path, dir })
+  const root = resolve(targetDir, '.ralph')
   return {
     root,
     sessionPath: resolve(root, 'session.json'),
@@ -39,6 +69,8 @@ export const buildStatePaths = (cwd) => {
     logsDir: resolve(root, 'logs'),
     runtimeLogPath: resolve(root, 'logs', 'runtime.jsonl'),
     monitorIntegrationPath: resolve(root, 'monitor-integration.json'),
+    // 新增：目标目录信息
+    targetDir,
   }
 }
 

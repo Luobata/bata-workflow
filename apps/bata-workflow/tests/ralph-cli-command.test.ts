@@ -50,7 +50,7 @@ describe('ralph cli command', () => {
     }
   })
 
-  it('supports /ralph with goal text and persists .ralph state', () => {
+  it('first /ralph goal invocation only persists plan and waits for confirmation', () => {
     const workspacePath = mkdtempSync(join(tmpdir(), 'ralph-cli-goal-'))
 
     try {
@@ -61,79 +61,123 @@ describe('ralph cli command', () => {
         kind: string
         summary: string
         ralphDirectory: string
+        requiresConfirmation: boolean
+        confirmationPrompt: string | null
         tasks: Array<{ status: string }>
       }
-      expect(payload.kind).toBe('create')
-      expect(payload.summary).toContain('blocked=0')
+      expect(payload.kind).toBe('plan')
+      expect(payload.summary).toContain('executed=0')
+      expect(payload.requiresConfirmation).toBe(true)
+      expect(payload.confirmationPrompt).toContain('确认')
       expect(payload.tasks.length).toBeGreaterThan(0)
-      expect(payload.tasks.every((task) => task.status === 'done')).toBe(true)
+      expect(payload.tasks.every((task) => task.status === 'pending')).toBe(true)
       expect(existsSync(resolve(workspacePath, '.ralph', 'session.json'))).toBe(true)
       expect(existsSync(resolve(workspacePath, '.ralph', 'tasks.json'))).toBe(true)
-      expect(existsSync(resolve(workspacePath, '.ralph', 'reviews'))).toBe(true)
+      expect(existsSync(resolve(workspacePath, '.ralph', 'confirmation-state.json'))).toBe(true)
       expect(payload.ralphDirectory).toBe(resolve(workspacePath, '.ralph'))
     } finally {
       rmSync(workspacePath, { recursive: true, force: true })
     }
   })
 
-  it('supports /ralph path mode and --resume from persisted state', () => {
+  it('rejects mixing a new goal with --execute', () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), 'ralph-cli-goal-execute-'))
+
+    try {
+      const result = runCli(['/ralph', '实现登录接口并补充测试', '--cwd', workspacePath, '--output', 'json', '--stubAgent', '--execute'])
+      expect(result.status).toBe(1)
+      expect(result.stderr).toContain('首次调用只会生成计划')
+      expect(result.stderr).toContain('/ralph --resume')
+    } finally {
+      rmSync(workspacePath, { recursive: true, force: true })
+    }
+  })
+
+  for (const confirmationPhrase of ['确认', '继续', '开始', 'confirm', 'continue', 'go']) {
+    it(`treats bare phrase "${confirmationPhrase}" as resume only when a plan is awaiting confirmation`, () => {
+      const workspacePath = mkdtempSync(join(tmpdir(), `ralph-cli-confirm-${confirmationPhrase}-`))
+
+      try {
+        const firstRun = runCli(['/ralph', '实现登录接口并补充测试', '--cwd', workspacePath, '--output', 'json', '--stubAgent'])
+        expect(firstRun.status).toBe(0)
+
+        const secondRun = runCli([confirmationPhrase, '--cwd', workspacePath, '--output', 'json', '--stubAgent'])
+        expect(secondRun.status).toBe(0)
+        const secondPayload = JSON.parse(secondRun.stdout) as { kind: string; summary: string }
+        expect(secondPayload.kind).toBe('resume')
+        expect(secondPayload.summary).toContain('blocked=0')
+        expect(secondRun.stderr).toContain('received confirmation')
+      } finally {
+        rmSync(workspacePath, { recursive: true, force: true })
+      }
+    })
+  }
+
+  it('keeps monorepo path-mode confirmation scoped to the target directory', () => {
     const workspacePath = mkdtempSync(join(tmpdir(), 'ralph-cli-path-'))
     const targetPath = mkdtempSync(join(tmpdir(), 'ralph-target-'))
 
     try {
       const firstRun = runCli(['/ralph', targetPath, '--cwd', workspacePath, '--mode', 'subagent', '--output', 'json', '--stubAgent'])
       expect(firstRun.status).toBe(0)
-      const firstPayload = JSON.parse(firstRun.stdout) as { mode: string; kind: string; autoPlanOnly: boolean }
+      const firstPayload = JSON.parse(firstRun.stdout) as { mode: string; kind: string; autoPlanOnly: boolean; requiresConfirmation: boolean }
       expect(firstPayload.mode).toBe('subagent')
       expect(firstPayload.kind).toBe('plan')
       expect(firstPayload.autoPlanOnly).toBe(true)
+      expect(firstPayload.requiresConfirmation).toBe(true)
 
-      const secondRun = runCli(['/ralph', '确认', '--cwd', workspacePath, '--output', 'json', '--stubAgent'])
+      const wrongCwdConfirm = runCli(['继续', '--cwd', workspacePath, '--output', 'json', '--stubAgent'])
+      expect(wrongCwdConfirm.status).toBe(1)
+      expect(wrongCwdConfirm.stderr).not.toContain('received confirmation')
+
+      const secondRun = runCli(['继续', '--cwd', targetPath, '--output', 'json', '--stubAgent'])
       expect(secondRun.status).toBe(0)
       const secondPayload = JSON.parse(secondRun.stdout) as { kind: string; summary: string }
       expect(secondPayload.kind).toBe('resume')
       expect(secondPayload.summary).toContain('blocked=0')
-      expect(secondRun.stderr).toContain('received confirmation')
 
-      const tasks = JSON.parse(readFileSync(resolve(workspacePath, '.ralph', 'tasks.json'), 'utf8')) as Array<{ status: string }>
+      const tasks = JSON.parse(readFileSync(resolve(targetPath, '.ralph', 'tasks.json'), 'utf8')) as Array<{ status: string }>
       expect(tasks.every((task) => task.status === 'done')).toBe(true)
-
-      const explicitExecuteRun = runCli(['/ralph', targetPath, '--cwd', workspacePath, '--mode', 'subagent', '--output', 'json', '--stubAgent', '--execute'])
-      expect(explicitExecuteRun.status).toBe(0)
-      const explicitExecutePayload = JSON.parse(explicitExecuteRun.stdout) as { kind: string; autoPlanOnly: boolean }
-      expect(explicitExecutePayload.kind).toBe('create')
-      expect(explicitExecutePayload.autoPlanOnly).toBe(false)
     } finally {
       rmSync(workspacePath, { recursive: true, force: true })
       rmSync(targetPath, { recursive: true, force: true })
     }
   })
 
-  it('auto resumes when .ralph has unfinished tasks and no explicit input', () => {
-    const workspacePath = mkdtempSync(join(tmpdir(), 'ralph-cli-auto-resume-'))
+  it('does not auto-resume while a plan is still awaiting explicit confirmation', () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), 'ralph-cli-awaiting-confirmation-'))
 
     try {
-      const interruptedRun = runCli(
-        ['/ralph', '先执行并制造一次中断', '--cwd', workspacePath, '--output', 'json', '--stubAgent'],
-        { RALPH_TEST_INTERRUPT_ONCE: '1' },
-      )
-      expect(interruptedRun.status).toBe(0)
-      const interruptedPayload = JSON.parse(interruptedRun.stdout) as { summary: string }
-      expect(interruptedPayload.summary).toMatch(/blocked=\d+/)
+      const firstRun = runCli(['/ralph', '实现功能A,实现功能B', '--cwd', workspacePath, '--output', 'json', '--stubAgent'])
+      expect(firstRun.status).toBe(0)
 
-      const autoResumeRun = runCli(['/ralph', '--cwd', workspacePath, '--output', 'json', '--stubAgent'])
-      expect(autoResumeRun.status).toBe(0)
-      const autoResumePayload = JSON.parse(autoResumeRun.stdout) as { kind: string; summary: string }
-      expect(autoResumePayload.kind).toBe('resume')
-      expect(autoResumePayload.summary).toContain('blocked=0')
-      expect(autoResumeRun.stderr).toContain('auto-enabled --resume')
+      const plainRun = runCli(['/ralph', '--cwd', workspacePath, '--output', 'json', '--stubAgent'])
+      expect(plainRun.status).toBe(1)
+      expect(plainRun.stderr).not.toContain('auto-enabled --resume')
+      expect(plainRun.stderr).toContain('确认')
 
-      const explicitGoalRun = runCli(['/ralph', '明确新目标应触发新会话', '--cwd', workspacePath, '--output', 'json', '--stubAgent'])
-      expect(explicitGoalRun.status).toBe(0)
-      const explicitGoalPayload = JSON.parse(explicitGoalRun.stdout) as { kind: string }
-      expect(explicitGoalPayload.kind).toBe('create')
+      const resumeRun = runCli(['/ralph', '--cwd', workspacePath, '--output', 'json', '--stubAgent', '--resume'])
+      expect(resumeRun.status).toBe(0)
+      const resumePayload = JSON.parse(resumeRun.stdout) as { kind: string; summary: string }
+      expect(resumePayload.kind).toBe('resume')
+      expect(resumePayload.summary).toContain('blocked=0')
     } finally {
       rmSync(workspacePath, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects mixing a new path input with --resume', () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), 'ralph-cli-path-resume-mix-'))
+    const targetPath = mkdtempSync(join(tmpdir(), 'ralph-cli-path-resume-target-'))
+
+    try {
+      const result = runCli(['/ralph', targetPath, '--cwd', workspacePath, '--output', 'json', '--stubAgent', '--resume'])
+      expect(result.status).toBe(1)
+      expect(result.stderr).toContain('首次调用只会生成计划')
+      expect(result.stderr).toContain('/ralph --resume')
+    } finally {
+      rmSync(workspacePath, { recursive: true, force: true })
+      rmSync(targetPath, { recursive: true, force: true })
     }
   })
 
@@ -141,10 +185,12 @@ describe('ralph cli command', () => {
     const workspacePath = mkdtempSync(join(tmpdir(), 'ralph-cli-resume-force-'))
 
     try {
-      const interruptedRun = runCli(
-        ['/ralph', '先执行并制造一次中断', '--cwd', workspacePath, '--output', 'json', '--stubAgent'],
-        { RALPH_TEST_INTERRUPT_ONCE: '1' },
-      )
+      const firstPlanRun = runCli(['/ralph', '先执行并制造一次中断', '--cwd', workspacePath, '--output', 'json', '--stubAgent'])
+      expect(firstPlanRun.status).toBe(0)
+
+      const interruptedRun = runCli(['/ralph', '--cwd', workspacePath, '--output', 'json', '--stubAgent', '--resume'], {
+        RALPH_TEST_INTERRUPT_ONCE: '1',
+      })
       expect(interruptedRun.status).toBe(0)
 
       const todoStatePath = resolve(workspacePath, '.ralph', 'todo-state.json')

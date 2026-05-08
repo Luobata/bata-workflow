@@ -14,6 +14,16 @@ const createTempRoot = (): string => {
   return root
 }
 
+const readRuntimeEvents = (ralphDir: string): string[] => {
+  const runtimeLogPath = resolve(ralphDir, 'logs', 'runtime.jsonl')
+  return readFileSync(runtimeLogPath, 'utf8')
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as { event: string })
+    .map((entry) => entry.event)
+}
+
 afterEach(() => {
   for (const root of tempRoots.splice(0)) {
     rmSync(root, { recursive: true, force: true })
@@ -104,11 +114,11 @@ describe('ralph skill runtime', () => {
     const cwd = createTempRoot()
     let callCount = 0
 
-      const result = await invokeRalph({
-        cwd,
-        goal: '实现任务拆解但暂不执行',
-        mode: 'independent',
-        dryRunPlan: true,
+    const result = await invokeRalph({
+      cwd,
+      goal: '实现任务拆解但暂不执行',
+      mode: 'independent',
+      dryRunPlan: true,
       todoBuilder: () => [
         {
           id: 'task-plan-only',
@@ -128,35 +138,50 @@ describe('ralph skill runtime', () => {
       },
     })
 
-      expect(result.kind).toBe('plan')
-      expect(result.summary).toContain('executed=0')
-      expect(callCount).toBe(0)
-      expect(result.tasks[0].acceptance.length).toBeGreaterThan(0)
-      expect(result.tasks[0].verification_cmds.length).toBeGreaterThan(0)
-      expect(Array.isArray(result.tasks[0].deps)).toBe(true)
+    expect(result.kind).toBe('plan')
+    expect(result.summary).toContain('executed=0')
+    expect(result.requiresConfirmation).toBe(true)
+    expect(result.confirmationPrompt).toContain('确认')
+    expect(callCount).toBe(0)
+    expect(result.tasks[0].acceptance.length).toBeGreaterThan(0)
+    expect(result.tasks[0].verification_cmds.length).toBeGreaterThan(0)
+    expect(Array.isArray(result.tasks[0].deps)).toBe(true)
 
     const tasksPath = resolve(cwd, '.ralph', 'tasks.json')
     const todoStatePath = resolve(cwd, '.ralph', 'todo-state.json')
     const todoMarkdownPath = resolve(cwd, '.ralph', 'TODO.md')
+    const confirmationStatePath = resolve(cwd, '.ralph', 'confirmation-state.json')
     const runtimeLogPath = resolve(cwd, '.ralph', 'logs', 'runtime.jsonl')
     const persistedTasks = JSON.parse(readFileSync(tasksPath, 'utf8'))
+    const confirmationState = JSON.parse(readFileSync(confirmationStatePath, 'utf8')) as {
+      awaitingConfirmation: boolean
+      reason: string
+      nextAction: string
+    }
     expect(persistedTasks[0].status).toBe('pending')
     expect(Array.isArray(persistedTasks[0].acceptance)).toBe(true)
     expect(Array.isArray(persistedTasks[0].verification_cmds)).toBe(true)
     expect(existsSync(todoStatePath)).toBe(true)
     expect(existsSync(todoMarkdownPath)).toBe(true)
+    expect(existsSync(confirmationStatePath)).toBe(true)
     expect(existsSync(runtimeLogPath)).toBe(true)
+    expect(confirmationState.awaitingConfirmation).toBe(true)
+    expect(confirmationState.reason).toBe('plan_ready_waiting_user_confirmation')
+    expect(confirmationState.nextAction).toContain('/ralph --resume')
     expect(readFileSync(todoMarkdownPath, 'utf8')).toContain('Ralph TODO Progress')
     expect(readFileSync(runtimeLogPath, 'utf8')).toContain('session.planned')
+    expect(readRuntimeEvents(resolve(cwd, '.ralph'))).toEqual(['session.start', 'session.planned'])
   })
 
-  it('creates .ralph state and completes tasks with persisted review advice', async () => {
+  it('forces first goal invocation into planning-only even when execute is requested', async () => {
     const cwd = createTempRoot()
+    let callCount = 0
+
     const result = await invokeRalph({
       cwd,
       goal: '实现一个按钮点击功能',
       mode: 'independent',
-      execute: true, // 明确指定执行模式
+      execute: true,
       todoBuilder: () => [
         {
           id: 'task-a',
@@ -167,6 +192,60 @@ describe('ralph skill runtime', () => {
           history: [],
         },
       ],
+      runAgent: async () => {
+        callCount += 1
+        return {
+          stdout: JSON.stringify({ status: 'completed', summary: 'should not run', suggestions: [] }),
+          stderr: '',
+        }
+      },
+    })
+
+    const ralphDir = resolve(cwd, '.ralph')
+    const tasksPath = resolve(ralphDir, 'tasks.json')
+    const confirmationStatePath = resolve(ralphDir, 'confirmation-state.json')
+
+    expect(result.kind).toBe('plan')
+    expect(result.summary).toContain('executed=0')
+    expect(result.requiresConfirmation).toBe(true)
+    expect(callCount).toBe(0)
+    expect(existsSync(ralphDir)).toBe(true)
+    expect(existsSync(tasksPath)).toBe(true)
+    expect(existsSync(confirmationStatePath)).toBe(true)
+
+    const persistedTasks = JSON.parse(readFileSync(tasksPath, 'utf8'))
+    const confirmationState = JSON.parse(readFileSync(confirmationStatePath, 'utf8')) as { awaitingConfirmation: boolean; reason: string }
+    expect(persistedTasks[0].status).toBe('pending')
+    expect(confirmationState.awaitingConfirmation).toBe(true)
+    expect(confirmationState.reason).toBe('plan_ready_waiting_user_confirmation')
+    expect(readRuntimeEvents(ralphDir)).toEqual(['session.start', 'session.planned'])
+  })
+
+  it('resumes after planning and completes tasks with persisted review advice', async () => {
+    const cwd = createTempRoot()
+
+    const sharedTodo = () => [
+      {
+        id: 'task-a',
+        title: '子任务1: 实现按钮点击',
+        status: 'pending',
+        reviewRounds: 0,
+        lastAdvicePath: null,
+        history: [],
+      },
+    ]
+
+    await invokeRalph({
+      cwd,
+      goal: '实现一个按钮点击功能',
+      mode: 'independent',
+      todoBuilder: sharedTodo,
+    })
+
+    const result = await invokeRalph({
+      cwd,
+      mode: 'independent',
+      resume: true,
       runAgent: async ({ role }) => ({
         stdout: JSON.stringify({
           status: 'completed',
@@ -182,8 +261,9 @@ describe('ralph skill runtime', () => {
     const tasksPath = resolve(ralphDir, 'tasks.json')
     const todoStatePath = resolve(ralphDir, 'todo-state.json')
     const runtimeLogPath = resolve(ralphDir, 'logs', 'runtime.jsonl')
+    const confirmationStatePath = resolve(ralphDir, 'confirmation-state.json')
 
-    expect(result.kind).toBe('create')
+    expect(result.kind).toBe('resume')
     expect(result.summary).toContain('blocked=0')
     expect(existsSync(ralphDir)).toBe(true)
     expect(existsSync(tasksPath)).toBe(true)
@@ -194,7 +274,10 @@ describe('ralph skill runtime', () => {
     expect(readFileSync(runtimeLogPath, 'utf8')).toContain('task.completed')
 
     const persistedTasks = JSON.parse(readFileSync(tasksPath, 'utf8'))
+    const confirmationState = JSON.parse(readFileSync(confirmationStatePath, 'utf8')) as { awaitingConfirmation: boolean; reason: string }
     expect(persistedTasks[0].status).toBe('done')
+    expect(confirmationState.awaitingConfirmation).toBe(false)
+    expect(confirmationState.reason).toBe('execution_started')
   })
 
   it('runs coding/review loop until review passes and records round count', async () => {
@@ -202,11 +285,10 @@ describe('ralph skill runtime', () => {
     let reviewCallCount = 0
     let codingCallCount = 0
 
-    const result = await invokeRalph({
+    await invokeRalph({
       cwd,
       goal: '修复接口超时问题',
       mode: 'subagent',
-      execute: true, // 明确指定执行模式
       todoBuilder: () => [
         {
           id: 'task-loop',
@@ -217,6 +299,12 @@ describe('ralph skill runtime', () => {
           history: [],
         },
       ],
+    })
+
+    const result = await invokeRalph({
+      cwd,
+      mode: 'subagent',
+      resume: true,
       runAgent: async ({ role }) => {
         if (role === 'coding') {
           codingCallCount += 1
@@ -255,11 +343,10 @@ describe('ralph skill runtime', () => {
     const cwd = createTempRoot()
     const prompts: string[] = []
 
-    const result = await invokeRalph({
+    await invokeRalph({
       cwd,
       goal: '验证 TODO 注入提示',
       mode: 'independent',
-      execute: true, // 明确指定执行模式
       todoBuilder: () => [
         {
           id: 'task-a',
@@ -283,6 +370,12 @@ describe('ralph skill runtime', () => {
           sourceRefs: ['docs/b.md'],
         },
       ],
+    })
+
+    const result = await invokeRalph({
+      cwd,
+      mode: 'independent',
+      resume: true,
       runAgent: async ({ prompt }) => {
         prompts.push(String(prompt))
         return {
@@ -312,7 +405,6 @@ describe('ralph skill runtime', () => {
       cwd,
       goal: '验证 monitor 集成输出',
       mode: 'independent',
-      execute: true, // 明确指定执行模式
       monitor: true,
       runMonitor: async () => {
         monitorCallCount += 1
@@ -330,7 +422,9 @@ describe('ralph skill runtime', () => {
       }),
     })
 
-    expect(result.summary).toContain('blocked=0')
+    expect(result.kind).toBe('plan')
+    expect(result.summary).toContain('executed=0')
+    expect(result.requiresConfirmation).toBe(true)
     expect(monitorCallCount).toBe(1)
     expect(result.monitorIntegration?.status).toBe('started')
     expect(result.monitorIntegration?.monitorUrl).toContain('http://127.0.0.1:3939')
@@ -344,7 +438,6 @@ describe('ralph skill runtime', () => {
       cwd,
       goal: '第一次执行启动 monitor',
       mode: 'independent',
-      execute: true, // 明确指定执行模式
       monitor: true,
       runMonitor: async () => {
         monitorCallCount += 1
@@ -401,8 +494,15 @@ describe('ralph skill runtime', () => {
       cwd,
       goal: '实现并验证完整流程',
       mode: 'independent',
-      execute: true, // 明确指定执行模式
       todoBuilder: () => sharedTodo,
+    })
+
+    expect(firstRun.kind).toBe('plan')
+
+    const interruptedRun = await invokeRalph({
+      cwd,
+      mode: 'independent',
+      resume: true,
       runAgent: async ({ role, prompt }) => {
         if (!interrupted && role === 'coding' && prompt.includes('子任务2')) {
           interrupted = true
@@ -416,7 +516,7 @@ describe('ralph skill runtime', () => {
       },
     })
 
-    expect(firstRun.summary).toContain('blocked=1')
+    expect(interruptedRun.summary).toContain('blocked=1')
 
     const secondRun = await invokeRalph({
       cwd,
@@ -434,5 +534,55 @@ describe('ralph skill runtime', () => {
 
     const checkpointFiles = readdirSync(resolve(cwd, '.ralph', 'checkpoints'))
     expect(checkpointFiles.length).toBeGreaterThan(0)
+  })
+
+  it('stores state in target directory when using --path (monorepo support)', async () => {
+    const cwd = createTempRoot()
+    const subprojectDir = resolve(cwd, 'packages', 'app-a')
+    mkdirSync(subprojectDir, { recursive: true })
+    writeFileSync(resolve(subprojectDir, 'design.md'), '# Feature\n## Step 1\n## Step 2\n', 'utf8')
+
+    const result = await invokeRalph({
+      cwd,
+      path: resolve(subprojectDir, 'design.md'),
+      mode: 'independent',
+      dryRunPlan: true,
+    })
+
+    expect(result.kind).toBe('plan')
+    expect(result.tasks.length).toBeGreaterThan(0)
+
+    // 状态目录应该在子项目下，而不是 cwd
+    const subprojectRalphDir = resolve(subprojectDir, '.ralph')
+    const rootRalphDir = resolve(cwd, '.ralph')
+    
+    expect(existsSync(subprojectRalphDir)).toBe(true)
+    expect(existsSync(resolve(subprojectRalphDir, 'session.json'))).toBe(true)
+    expect(existsSync(resolve(subprojectRalphDir, 'tasks.json'))).toBe(true)
+    
+    // 根目录不应该有 .ralph
+    expect(existsSync(rootRalphDir)).toBe(false)
+  })
+
+  it('stores state in target directory when using --dir (monorepo support)', async () => {
+    const cwd = createTempRoot()
+    const docsDir = resolve(cwd, 'packages', 'app-b', 'docs')
+    mkdirSync(docsDir, { recursive: true })
+    writeFileSync(resolve(docsDir, 'plan.md'), '# Module\n## Feature A\n## Feature B\n', 'utf8')
+
+    const result = await invokeRalph({
+      cwd,
+      dir: docsDir,
+      mode: 'independent',
+      dryRunPlan: true,
+    })
+
+    expect(result.kind).toBe('plan')
+    expect(result.tasks.length).toBeGreaterThan(0)
+
+    // 状态目录应该在子项目下
+    const subprojectRalphDir = resolve(docsDir, '.ralph')
+    expect(existsSync(subprojectRalphDir)).toBe(true)
+    expect(existsSync(resolve(subprojectRalphDir, 'session.json'))).toBe(true)
   })
 })

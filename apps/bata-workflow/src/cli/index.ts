@@ -54,6 +54,13 @@ const TEAM_RUN_MAX_SIZE = 32
 const TEAM_RUN_DSL_NAME = 'team-run'
 const TEAM_SLOT_OVERRIDE_KEYS = new Set<TeamSlotOverrideKey>(['backend', 'model', 'profile'])
 const EXECUTION_BACKENDS = new Set<ExecutionBackend>(['coco', 'claude-code', 'local-cc'])
+const RALPH_CONFIRMATION_PHRASES = new Set(['确认', '继续', '开始', 'confirm', 'continue', 'go'])
+
+interface RalphConfirmationState {
+  awaitingConfirmation?: boolean
+  nextAction?: string
+  reason?: string
+}
 
 export interface ParsedBataWorkflowTeamInvocation {
   goal: string
@@ -138,6 +145,23 @@ function isLikelyPathToken(value: string): boolean {
   }
 
   return isAbsolute(value) || value.startsWith('./') || value.startsWith('../') || value.startsWith('~/')
+}
+
+function isRalphConfirmationPhrase(value: string): boolean {
+  return RALPH_CONFIRMATION_PHRASES.has(value.trim().toLowerCase())
+}
+
+function readRalphConfirmationState(cwd: string): RalphConfirmationState | null {
+  const confirmationStatePath = resolve(cwd, '.ralph', 'confirmation-state.json')
+  if (!existsSync(confirmationStatePath)) {
+    return null
+  }
+
+  try {
+    return JSON.parse(readFileSync(confirmationStatePath, 'utf8')) as RalphConfirmationState
+  } catch {
+    return null
+  }
 }
 
 function isMonitorUnavailableError(error: unknown): boolean {
@@ -262,22 +286,16 @@ async function runRalphCommand(params: { flags: Map<string, string>; positionals
 
   const explicitGoal = (flags.get('goal') ?? '').trim()
   const explicitPath = (flags.get('path') ?? '').trim()
+  const explicitDir = (flags.get('dir') ?? '').trim()
   const joinedPositionals = positionals.join(' ').trim()
-  const isConfirmReply = /^确认$|^confirm$|^yes$/i.test(joinedPositionals)
-  const positionalPath = !explicitPath && positionals.length === 1 && isLikelyPathToken(positionals[0]!) ? resolve(cwd, positionals[0]!) : ''
+  const isConfirmReply = isRalphConfirmationPhrase(joinedPositionals)
+  const positionalPath = !explicitPath && !explicitDir && positionals.length === 1 && isLikelyPathToken(positionals[0]!) ? resolve(cwd, positionals[0]!) : ''
+  const pathInput = explicitPath ? resolve(cwd, explicitPath) : positionalPath
+  const dirInput = explicitDir ? resolve(cwd, explicitDir) : ''
+  const goalInput = explicitGoal || (!pathInput && !dirInput && !isConfirmReply ? joinedPositionals : '')
+  const confirmationState = readRalphConfirmationState(cwd)
 
-  const confirmationStatePath = resolve(cwd, '.ralph', 'confirmation-state.json')
-  const hasConfirmationState = existsSync(confirmationStatePath)
-  let confirmationState: { awaitingConfirmation?: boolean; nextAction?: string } | null = null
-  if (hasConfirmationState) {
-    try {
-      confirmationState = JSON.parse(readFileSync(confirmationStatePath, 'utf8')) as { awaitingConfirmation?: boolean; nextAction?: string }
-    } catch {
-      confirmationState = null
-    }
-  }
-
-  if (!explicitGoal && !explicitPath && isConfirmReply) {
+  if (!explicitGoal && !explicitPath && !explicitDir && isConfirmReply) {
     if (confirmationState?.awaitingConfirmation) {
       resume = true
       process.stderr.write('[bata-workflow] /ralph received confirmation and enabled --resume\n')
@@ -286,13 +304,19 @@ async function runRalphCommand(params: { flags: Map<string, string>; positionals
     }
   }
 
-  const pathInput = explicitPath ? resolve(cwd, explicitPath) : positionalPath
-  const goalInput = explicitGoal || (!pathInput && !isConfirmReply ? joinedPositionals : '')
+  if ((goalInput || pathInput || dirInput) && (resume || resumeForce || execute)) {
+    throw new Error('首次调用只会生成计划；请先生成计划，再回复“确认/继续/开始”，或执行 /ralph --resume。')
+  }
+
   const sessionPath = resolve(cwd, '.ralph', 'session.json')
   const tasksPath = resolve(cwd, '.ralph', 'tasks.json')
   const hasResumeState = existsSync(sessionPath) && existsSync(tasksPath)
 
-  if (!resume && !goalInput && !pathInput) {
+  if (!resume && !goalInput && !pathInput && !dirInput && confirmationState?.awaitingConfirmation) {
+    throw new Error('当前计划已生成并等待确认；请回复“确认/继续/开始”，或执行 /ralph --resume。')
+  }
+
+  if (!resume && !goalInput && !pathInput && !dirInput) {
     const todoStatePath = resolve(cwd, '.ralph', 'todo-state.json')
     if (existsSync(todoStatePath)) {
       try {
@@ -313,7 +337,7 @@ async function runRalphCommand(params: { flags: Map<string, string>; positionals
     }
   }
 
-  if (!resume && !goalInput && !pathInput) {
+  if (!resume && !goalInput && !pathInput && !dirInput) {
     throw new Error('`/ralph` 需要提供目标文本或目录路径，或通过 --resume / --resumeForce 恢复（目录模式可回复“确认”）')
   }
 
@@ -328,6 +352,7 @@ async function runRalphCommand(params: { flags: Map<string, string>; positionals
     cwd,
     goal: goalInput,
     path: pathInput,
+    dir: dirInput,
     mode,
     output,
     resume,
@@ -807,6 +832,17 @@ function formatDoctorSkillResult(result: DoctorSkillResult, fixRequested: boolea
 export async function main(): Promise<void> {
   const [, , rawCommand = 'plan', ...rawArgs] = process.argv
   const { flags: parsedFlags, positionals } = parseFlags(rawArgs, { preserveSeparator: rawCommand === '/bata-workflow-team' })
+
+  if (rawCommand !== '/ralph' && rawCommand !== 'ralph' && isRalphConfirmationPhrase(rawCommand)) {
+    const confirmationCwd = resolve(parsedFlags.get('cwd') ?? process.cwd())
+    if (readRalphConfirmationState(confirmationCwd)?.awaitingConfirmation) {
+      const resumeFlags = new Map(parsedFlags)
+      resumeFlags.set('resume', 'true')
+      process.stderr.write('[bata-workflow] /ralph received confirmation and enabled --resume\n')
+      await runRalphCommand({ flags: resumeFlags, positionals: [] })
+      return
+    }
+  }
 
   if (rawCommand === '/ralph' || rawCommand === 'ralph') {
     await runRalphCommand({ flags: parsedFlags, positionals })
