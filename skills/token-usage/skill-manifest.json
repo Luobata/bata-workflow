@@ -1,0 +1,26 @@
+{
+  "name": "token-usage",
+  "displayName": "Token Usage",
+  "entry": "SKILL.md",
+  "cocoInstallName": "token-usage",
+  "version": "0.1.0",
+  "files": [
+    "skill-manifest.json",
+    "SKILL.md",
+    "runtime/**/*.mjs"
+  ],
+  "dev": {
+    "link": true,
+    "publishLocal": true
+  },
+  "metadata": {
+    "description": "Query local Coco and Codex token usage; defaults to current client and supports --agent coco/codex/all",
+    "tags": [
+      "token",
+      "usage",
+      "coco",
+      "codex",
+      "session"
+    ]
+  }
+}

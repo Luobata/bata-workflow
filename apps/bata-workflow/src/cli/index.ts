@@ -730,14 +730,14 @@ function resolveSkillRoot(skillName: string): string {
   throw new Error(`skill 名称超出 skills 目录: ${skillName}`)
 }
 
-function resolveSkillInstallRoot(): string {
+function resolveSkillInstallRoot(agent: 'coco' | 'codex' = 'coco'): string {
   const homeDirectory = process.env.HOME ?? process.env.USERPROFILE
 
   if (!homeDirectory) {
     throw new Error('无法解析用户目录，请设置 HOME 或 USERPROFILE')
   }
 
-  return resolve(homeDirectory, '.coco', 'skills')
+  return resolve(homeDirectory, agent === 'codex' ? '.codex' : '.coco', 'skills')
 }
 
 function shouldRespawnSkillCommandWithPreservedSymlinks(): boolean {
@@ -874,7 +874,6 @@ export async function main(): Promise<void> {
     }
 
     const skillDevkit = await loadSkillDevkit()
-    const installRoot = resolveSkillInstallRoot()
 
     await dispatchSkillCommand(rawArgs, {
       validate({ skillName }) {
@@ -894,8 +893,9 @@ export async function main(): Promise<void> {
           `Packed skill: ${result.manifest.cocoInstallName}@${result.manifest.version}\nOutput Directory: ${result.outputDirectory}\nMetadata Path: ${result.metadataPath}\n`,
         )
       },
-      link({ skillName }) {
+      link({ skillName, agent }) {
         const skillRoot = resolveSkillRoot(skillName)
+        const installRoot = resolveSkillInstallRoot(agent)
         const result = skillDevkit.linkSkill({
           skillRoot,
           installRoot,
@@ -906,8 +906,9 @@ export async function main(): Promise<void> {
           `Linked skill: ${result.manifest.cocoInstallName}@${result.manifest.version}\nInstall Path: ${result.installPath}\nState Path: ${result.statePath}\n`,
         )
       },
-      unlink({ skillName }) {
+      unlink({ skillName, agent }) {
         const skillRoot = resolveSkillRoot(skillName)
+        const installRoot = resolveSkillInstallRoot(agent)
         const result = skillDevkit.removeLinkedSkill({
           skillRoot,
           installRoot,
@@ -920,8 +921,9 @@ export async function main(): Promise<void> {
             : `Unlink skipped: ${result.reason}\nInstall Path: ${result.installPath}\nState Path: ${result.statePath}\n`,
         )
       },
-      publishLocal({ skillName }) {
+      publishLocal({ skillName, agent }) {
         const skillRoot = resolveSkillRoot(skillName)
+        const installRoot = resolveSkillInstallRoot(agent)
         const result = skillDevkit.publishLocalSkill({
           skillRoot,
           packRoot: skillPacksRoot,
@@ -933,8 +935,9 @@ export async function main(): Promise<void> {
           `Published local skill: ${result.manifest.cocoInstallName}@${result.manifest.version}\nInstall Path: ${result.installPath}\nState Path: ${result.statePath}\nPack Directory: ${result.packResult.outputDirectory}\n`,
         )
       },
-      status({ skillName }) {
+      status({ skillName, agent }) {
         const skillRoot = resolveSkillRoot(skillName)
+        const installRoot = resolveSkillInstallRoot(agent)
         const result = skillDevkit.resolveSkillStatus({
           skillRoot,
           installRoot,
@@ -943,8 +946,9 @@ export async function main(): Promise<void> {
 
         process.stdout.write(formatSkillStatusResult(result))
       },
-      doctor({ skillName, fix }) {
+      doctor({ skillName, agent, fix }) {
         const skillRoot = resolveSkillRoot(skillName)
+        const installRoot = resolveSkillInstallRoot(agent)
 
         if (fix) {
           process.stderr.write('[bata-workflow] doctor --fix 当前仅执行只读检查，尚未调用自动修复\n')

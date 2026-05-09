@@ -236,7 +236,7 @@ describe('skill command', () => {
 
     await dispatchSkillCommand(['validate', 'demo-skill'], handlers)
 
-    expect(handlers.validate).toHaveBeenCalledWith({ skillName: 'demo-skill' })
+    expect(handlers.validate).toHaveBeenCalledWith({ skillName: 'demo-skill', agent: 'coco' })
     expect(handlers.pack).not.toHaveBeenCalled()
     expect(handlers.doctor).not.toHaveBeenCalled()
   })
@@ -246,7 +246,7 @@ describe('skill command', () => {
 
     await dispatchSkillCommand(['doctor', 'demo-skill', '--fix'], handlers)
 
-    expect(handlers.doctor).toHaveBeenCalledWith({ skillName: 'demo-skill', fix: true })
+    expect(handlers.doctor).toHaveBeenCalledWith({ skillName: 'demo-skill', agent: 'coco', fix: true })
     expect(handlers.validate).not.toHaveBeenCalled()
   })
 
@@ -255,8 +255,23 @@ describe('skill command', () => {
 
     await dispatchSkillCommand(['doctor', 'demo-skill', '--fix=false'], handlers)
 
-    expect(handlers.doctor).toHaveBeenCalledWith({ skillName: 'demo-skill', fix: false })
+    expect(handlers.doctor).toHaveBeenCalledWith({ skillName: 'demo-skill', agent: 'coco', fix: false })
     expect(handlers.validate).not.toHaveBeenCalled()
+  })
+
+  it('skill --agent codex 会分发到指定 agent', async () => {
+    const handlers = createHandlers()
+
+    await dispatchSkillCommand(['link', 'demo-skill', '--agent', 'codex'], handlers)
+
+    expect(handlers.link).toHaveBeenCalledWith({ skillName: 'demo-skill', agent: 'codex' })
+    expect(handlers.validate).not.toHaveBeenCalled()
+  })
+
+  it('skill --agent 非法值会拒绝', async () => {
+    await expect(dispatchSkillCommand(['link', 'demo-skill', '--agent', 'claude'], createHandlers())).rejects.toThrow(
+      /agent 非法: claude/,
+    )
   })
 
   it('doctor --fix 显式传入非法布尔值会拒绝', async () => {
@@ -320,6 +335,33 @@ describe('skill command', () => {
     expect(result.stderr).toContain('skill validate 不支持参数: dir')
     expect(result.stderr).not.toContain('ENOENT')
     expect(result.stderr).not.toContain('/definitely/not/real')
+  })
+
+  it('skill --agent codex links into Codex skill root', () => {
+    const sandbox = createSkillCliSandbox()
+    const installName = 'monitor'
+    const codexInstallPath = resolve(sandbox.homeDirectory, '.codex', 'skills', installName)
+    const cocoInstallPath = resolve(sandbox.homeDirectory, '.coco', 'skills', installName)
+    const statePath = resolve(sandbox.skillStateRoot, `${installName}.json`)
+    const cliEnv = {
+      BATA_WORKFLOW_STATE_ROOT: sandbox.stateRoot,
+      BATA_WORKFLOW_SKILL_PACKS_ROOT: sandbox.skillPacksRoot,
+    }
+
+    try {
+      const linkResult = runSkillCli(['link', 'monitor', '--agent', 'codex'], sandbox.homeDirectory, cliEnv)
+
+      expect(linkResult.status).toBe(0)
+      expect(linkResult.stdout).toContain(`Install Path: ${codexInstallPath}`)
+      expect(lstatSync(codexInstallPath).isSymbolicLink()).toBe(true)
+      expect(existsSync(cocoInstallPath)).toBe(false)
+      expect(JSON.parse(readFileSync(statePath, 'utf8'))).toMatchObject({
+        cocoInstallName: 'monitor',
+        mode: 'linked',
+      })
+    } finally {
+      rmSync(sandbox.homeDirectory, { recursive: true, force: true })
+    }
   })
 
   it('seeded monitor skill supports validate link status doctor and publish-local lifecycle', async () => {

@@ -1,9 +1,11 @@
 import { isAbsolute, win32 } from 'node:path'
 
 type SkillCommandName = 'validate' | 'pack' | 'link' | 'unlink' | 'publish-local' | 'status' | 'doctor'
+type SkillAgent = 'coco' | 'codex'
 
 type SkillCommandPayload = {
   skillName: string
+  agent: SkillAgent
 }
 
 type DoctorSkillCommandPayload = SkillCommandPayload & {
@@ -25,6 +27,7 @@ export interface SkillCommandHandlers {
 interface ParsedSkillCommand {
   subcommand: SkillCommandName
   skillName: string
+  agent: SkillAgent
   fix: boolean
 }
 
@@ -39,6 +42,7 @@ const KNOWN_SKILL_COMMANDS = new Set<SkillCommandName>([
 ])
 
 const BOOLEAN_FLAGS = new Set(['fix'])
+const AGENT_VALUES = new Set<SkillAgent>(['coco', 'codex'])
 
 function parseBooleanFlagValue(flagName: string, rawValue: string): string {
   if (rawValue === 'true' || rawValue === 'false') {
@@ -95,6 +99,18 @@ function parseSkillFlags(args: string[]): { flags: Map<string, string>; position
   return { flags, positionals }
 }
 
+function parseSkillAgent(rawAgent: string | undefined): SkillAgent {
+  if (!rawAgent) {
+    return 'coco'
+  }
+
+  if (AGENT_VALUES.has(rawAgent as SkillAgent)) {
+    return rawAgent as SkillAgent
+  }
+
+  throw new Error(`agent 非法: ${rawAgent}（可选: coco, codex）`)
+}
+
 function parseSkillName(rawSkillName: string | undefined): string {
   const skillName = rawSkillName?.trim()
 
@@ -137,7 +153,12 @@ export function parseSkillCommand(args: string[]): ParsedSkillCommand {
     throw new Error('skill 命令只接受一个 skill 名称')
   }
 
-  const unsupportedFlags = [...flags.keys()].filter((flag) => subcommand !== 'doctor' || flag !== 'fix')
+  const supportedFlags = new Set(['agent'])
+  if (subcommand === 'doctor') {
+    supportedFlags.add('fix')
+  }
+
+  const unsupportedFlags = [...flags.keys()].filter((flag) => !supportedFlags.has(flag))
   if (unsupportedFlags.length > 0) {
     throw new Error(`skill ${subcommand} 不支持参数: ${unsupportedFlags.join(', ')}`)
   }
@@ -145,6 +166,7 @@ export function parseSkillCommand(args: string[]): ParsedSkillCommand {
   return {
     subcommand,
     skillName,
+    agent: parseSkillAgent(flags.get('agent')),
     fix: flags.get('fix') === 'true',
   }
 }
@@ -154,25 +176,25 @@ export async function dispatchSkillCommand(args: string[], handlers: SkillComman
 
   switch (command.subcommand) {
     case 'validate':
-      await handlers.validate({ skillName: command.skillName })
+      await handlers.validate({ skillName: command.skillName, agent: command.agent })
       return
     case 'pack':
-      await handlers.pack({ skillName: command.skillName })
+      await handlers.pack({ skillName: command.skillName, agent: command.agent })
       return
     case 'link':
-      await handlers.link({ skillName: command.skillName })
+      await handlers.link({ skillName: command.skillName, agent: command.agent })
       return
     case 'unlink':
-      await handlers.unlink({ skillName: command.skillName })
+      await handlers.unlink({ skillName: command.skillName, agent: command.agent })
       return
     case 'publish-local':
-      await handlers.publishLocal({ skillName: command.skillName })
+      await handlers.publishLocal({ skillName: command.skillName, agent: command.agent })
       return
     case 'status':
-      await handlers.status({ skillName: command.skillName })
+      await handlers.status({ skillName: command.skillName, agent: command.agent })
       return
     case 'doctor':
-      await handlers.doctor({ skillName: command.skillName, fix: command.fix })
+      await handlers.doctor({ skillName: command.skillName, agent: command.agent, fix: command.fix })
       return
   }
 }
