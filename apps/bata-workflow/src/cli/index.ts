@@ -740,6 +740,10 @@ function resolveSkillInstallRoot(agent: 'coco' | 'codex' = 'coco'): string {
   return resolve(homeDirectory, agent === 'codex' ? '.codex' : '.coco', 'skills')
 }
 
+function resolveSkillStateRoot(agent: 'coco' | 'codex' = 'coco'): string {
+  return agent === 'coco' ? skillStateRoot : resolve(skillStateRoot, agent)
+}
+
 function shouldRespawnSkillCommandWithPreservedSymlinks(): boolean {
   return process.env.BATA_WORKFLOW_SKILL_PRESERVE_SYMLINKS !== 'true' && !process.execArgv.includes('--preserve-symlinks')
 }
@@ -899,7 +903,7 @@ export async function main(): Promise<void> {
         const result = skillDevkit.linkSkill({
           skillRoot,
           installRoot,
-          stateRoot: skillStateRoot,
+          stateRoot: resolveSkillStateRoot(agent),
         })
 
         process.stdout.write(
@@ -912,7 +916,7 @@ export async function main(): Promise<void> {
         const result = skillDevkit.removeLinkedSkill({
           skillRoot,
           installRoot,
-          stateRoot: skillStateRoot,
+          stateRoot: resolveSkillStateRoot(agent),
         })
 
         process.stdout.write(
@@ -928,7 +932,7 @@ export async function main(): Promise<void> {
           skillRoot,
           packRoot: skillPacksRoot,
           installRoot,
-          stateRoot: skillStateRoot,
+          stateRoot: resolveSkillStateRoot(agent),
         })
 
         process.stdout.write(
@@ -941,7 +945,7 @@ export async function main(): Promise<void> {
         const result = skillDevkit.resolveSkillStatus({
           skillRoot,
           installRoot,
-          stateRoot: skillStateRoot,
+          stateRoot: resolveSkillStateRoot(agent),
         })
 
         process.stdout.write(formatSkillStatusResult(result))
@@ -957,7 +961,7 @@ export async function main(): Promise<void> {
         const result = skillDevkit.doctorSkill({
           skillRoot,
           installRoot,
-          stateRoot: skillStateRoot,
+          stateRoot: resolveSkillStateRoot(agent),
         })
 
         process.stdout.write(formatDoctorSkillResult(result, fix))

@@ -342,7 +342,7 @@ describe('skill command', () => {
     const installName = 'monitor'
     const codexInstallPath = resolve(sandbox.homeDirectory, '.codex', 'skills', installName)
     const cocoInstallPath = resolve(sandbox.homeDirectory, '.coco', 'skills', installName)
-    const statePath = resolve(sandbox.skillStateRoot, `${installName}.json`)
+    const statePath = resolve(sandbox.skillStateRoot, 'codex', `${installName}.json`)
     const cliEnv = {
       BATA_WORKFLOW_STATE_ROOT: sandbox.stateRoot,
       BATA_WORKFLOW_SKILL_PACKS_ROOT: sandbox.skillPacksRoot,
